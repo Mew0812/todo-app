@@ -49,9 +49,9 @@ export function Calendar({ today, selected, onSelect, minimum, dots, initial = t
 }
 
 export function DatePicker({ today, value, onChange, onClose }:
-  { today: string; value: string | null; onChange: (date: string | null) => void; onClose: () => void }) {
+  { today: string; value: string | null; onChange: (date: string) => void; onClose: () => void }) {
   function select(date: string) {
-    onChange(date === value ? null : date)
+    if (date !== value) onChange(date)
     onClose()
   }
   return <div className="popover-backdrop" onClick={onClose}>

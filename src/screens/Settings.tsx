@@ -3,13 +3,14 @@ import { Download, Ellipsis, Plus, Upload } from 'lucide-react'
 import { Sheet } from '../components/Sheet'
 import { SortableRows } from '../components/SortableRows'
 import { colors, formatDate, localDate, type Data, type Task } from '../data/model'
-import { HistoryRows } from './Todo'
+import { Card, HistoryRows, type Actions } from './Todo'
 
 type Group = Data['groups'][number]
 type Props = {
   data: Data; onClose: () => void; onGroups: (ids: string[]) => void
   onGroup: (id: string | null, patch: Partial<Group>) => Promise<string | undefined>
   deleteGroup: (id: string) => void; completed: Task[]; trash: Task[]
+  undated: Task[]; taskActions: Actions
   openTask: (task: Task) => void; restore: (task: Task, trash?: boolean) => void; purge: (task: Task) => void
   onExport: () => void; onImport: (file: File) => void
 }
@@ -75,6 +76,12 @@ export function Settings(props: Props) {
         {error && <p className="error" role="alert">{error}</p>}
         <div className="settings-row fixed-group"><i className="color-dot" style={{ background: '#777f91' }} />未分類</div>
       </section>
+      {props.undated.length > 0 && <details>
+        <summary>日付未設定（{props.undated.length}件）</summary>
+        <div className="task-list disclosure-body">
+          {props.undated.map(task => <Card key={task.id} task={task} actions={props.taskActions} />)}
+        </div>
+      </details>}
       <details><summary>完了履歴（{props.completed.length}件）</summary>
         {props.completed.length ? <HistoryRows tasks={props.completed} onOpen={props.openTask} onRestore={props.restore} />
           : <p className="muted">完了したタスクはありません</p>}

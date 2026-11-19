@@ -2,8 +2,11 @@ import { z } from 'zod'
 
 export const colors = ['#a18bfa', '#739cff', '#52bdee', '#51c7bd', '#62cb8b', '#a5c962',
   '#e6c45c', '#f5a367', '#f18285', '#f08eb7', '#cf8beb', '#c3a58b'] as const
-export const tabs = ['今日', 'すべて', '今後の予定'] as const
+export const tabs = ['今日', '明日以降'] as const
 export type Tab = typeof tabs[number]
+// Retain version 1 storage keys so existing settings and backups remain compatible.
+const storedTabs = ['今日', 'すべて', '今後の予定'] as const
+export const sortKey = (tab: Tab) => tab === '今日' ? '今日' : '今後の予定'
 export const sorts = ['手動順', '予定日の昇順', '重要なタスクを先頭に表示'] as const
 const id = z.string().min(1)
 const timestamp = z.iso.datetime()
@@ -23,7 +26,7 @@ export const backup = z.object({
     color: z.enum(colors), collapsed: z.boolean(),
   })).max(12),
   settings: z.object({
-    sort: z.record(z.enum(tabs), z.enum(sorts)), ungroupedCollapsed: z.boolean(),
+    sort: z.record(z.enum(storedTabs), z.enum(sorts)), ungroupedCollapsed: z.boolean(),
     createdAt: timestamp, lastBackup: timestamp.nullable(),
   }),
 }).refine(data => unique(data.tasks.map(t => t.id))
@@ -53,6 +56,19 @@ export function offsetDate(value: string, days: number) {
   date.setDate(date.getDate() + days)
   return localDate(date)
 }
+export function futureRange(today: string) {
+  const end = parseDate(today)
+  end.setDate(1)
+  end.setMonth(end.getMonth() + 2)
+  end.setDate(0)
+  return { start: offsetDate(today, 1), end: localDate(end) }
+}
+export function futureDates(today: string) {
+  const { start, end } = futureRange(today)
+  const dates: string[] = []
+  for (let date = start; date <= end; date = offsetDate(date, 1)) dates.push(date)
+  return dates
+}
 export const formatDate = (value: string | null) => value
   ? new Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric', weekday: 'short' }).format(parseDate(value))
   : '日付未設定'
@@ -74,9 +90,27 @@ export function maintain(data: Data, now = new Date()): Data {
   })
   return changed ? { ...data, tasks } : data
 }
-export const belongs = (task: Task, tab: Tab, today: string) =>
-  !task.completed && !task.deletedAt && (tab === 'すべて' || (tab === '今日'
-    ? task.date === today : Boolean(task.date && task.date > today)))
+export function belongs(task: Task, tab: Tab, today: string) {
+  if (task.completed || task.deletedAt || !task.date) return false
+  return tab === '今日' ? task.date === today : task.date > today && task.date <= futureRange(today).end
+}
+
+export function moveWithinDate(data: Data, id: string, date: string, beforeId?: string): Data {
+  const ordered = [...data.tasks].sort((a, b) => a.order - b.order)
+  const eligible = (task: Task) => task.date === date && !task.completed && !task.deletedAt
+  const sameDay = ordered.filter(eligible)
+  const index = sameDay.findIndex(task => task.id === id)
+  if (index < 0) return data
+  const [moved] = sameDay.splice(index, 1)
+  const destination = sameDay.findIndex(task => task.id === beforeId)
+  sameDay.splice(destination < 0 ? sameDay.length : destination, 0, { ...moved, updatedAt: iso() })
+  let next = 0
+  const positions = new Map(ordered.map((task, order) => {
+    const row = eligible(task) ? sameDay[next++] : task
+    return [row.id, row.order === order ? row : { ...row, order }]
+  }))
+  return { ...data, tasks: data.tasks.map(task => positions.get(task.id)!) }
+}
 export function restore(task: Task, today: string, fromTrash = false): Task {
   const restored = fromTrash ? { ...task, deletedAt: null } : { ...task, completed: false, completedAt: null }
   if (!restored.completed && restored.date && restored.date < today) restored.date = today

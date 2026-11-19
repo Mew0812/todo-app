@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { CalendarDays, Check, ClipboardList, Plus, Settings2 } from 'lucide-react'
-import { Calendar, DatePicker } from './components/Calendar'
-import { belongs, formatDate, iso, localDate, moveTask, restore as restoreTask, retention, colors,
+import { Calendar } from './components/Calendar'
+import { belongs, formatDate, iso, localDate, moveTask, moveWithinDate, sortKey, restore as restoreTask, retention, colors,
   type Data, type Tab, type Task } from './data/model'
 import { readBackup, update, type Change } from './data/storage'
 import { Settings } from './screens/Settings'
 import { AddTask, TaskDetail } from './screens/TaskSheets'
-import { Todo } from './screens/Todo'
+import { Todo, type Actions } from './screens/Todo'
 
 type Detail = { task: Task; snapshot: Data }
 type Leaving = { task: Task; tab: Tab }
@@ -19,10 +19,9 @@ export default function App() {
   const [screen, setScreen] = useState<'todo' | 'calendar'>('todo')
   const [selected, setSelected] = useState(localDate)
   const [settings, setSettings] = useState(false)
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState<{ date?: string }>()
   const [completedOpen, setCompletedOpen] = useState(false)
   const [detail, setDetail] = useState<Detail>()
-  const [picker, setPicker] = useState<Task>()
   const [undo, setUndo] = useState<Task>()
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -68,7 +67,7 @@ export default function App() {
   const trash = view.tasks.filter(task => task.deletedAt).sort((a, b) => newest(a.deletedAt, b.deletedAt))
   const visible = active.filter(task => belongs(task, tab, today))
   for (const row of Object.values(leaving)) {
-    if (row.tab === tab && !visible.some(task => task.id === row.task.id)) visible.push(row.task)
+    if (row.tab === tab && belongs(row.task, tab, today) && !visible.some(task => task.id === row.task.id)) visible.push(row.task)
   }
   const todaysCompleted = completed.filter(task => !leaving[task.id] && localDate(new Date(task.completedAt!)) === today)
   const calendarTasks = active.filter(task => task.date === selected).sort((a, b) => a.order - b.order)
@@ -167,6 +166,11 @@ export default function App() {
     }
   }
 
+  const actions: Actions = {
+    open: openTask, complete: task => leave(task, false), remove: task => leave(task, true),
+    importance: task => patch(task.id, row => ({ ...row, important: !row.important })),
+  }
+
   return <div className="app">
     <header className="app-header">
       <div className="brand"><span className="brand-mark"><Check size={17} strokeWidth={3} /></span><span>MyTodo</span></div>
@@ -179,12 +183,11 @@ export default function App() {
       {screen === 'todo' ? <Todo data={view} tab={tab} today={today} visible={visible}
         completed={todaysCompleted} completedOpen={completedOpen} onCompletedToggle={setCompletedOpen} onTab={setTab}
         toggle={toggle} restore={restore} animations={animations}
-        onSort={sort => save(current => ({ ...current, settings: { ...current.settings, sort: { ...current.settings.sort, [tab]: sort } } }))}
-        move={(task, group, before) => save(current => moveTask(current, task.id, group, before))}
-        actions={{
-          open: openTask, complete: task => leave(task, false), remove: task => leave(task, true),
-          importance: task => patch(task.id, row => ({ ...row, important: !row.important })), date: setPicker,
-        }} /> : <>
+        onAddDate={date => setAdding({ date })}
+        onSort={sort => save(current => ({ ...current, settings: { ...current.settings, sort: { ...current.settings.sort, [sortKey(tab)]: sort } } }))}
+        move={(task, group, before) => save(current => tab === '明日以降' && task.date
+          ? moveWithinDate(current, task.id, task.date, before) : moveTask(current, task.id, group, before))}
+        actions={actions} /> : <>
         <div className="calendar-panel"><Calendar today={today} selected={selected} initial={selected}
           onSelect={setSelected} dots={dots} /></div>
         <section className="calendar-tasks"><h2>{formatDate(selected)}</h2>
@@ -193,12 +196,13 @@ export default function App() {
         </section>
       </>}
     </main>
-    {screen === 'todo' && <button className="fab" aria-label="タスクを追加" onClick={() => setAdding(true)}><Plus size={27} /></button>}
+    {screen === 'todo' && <button className="fab" aria-label="タスクを追加" onClick={() => setAdding({})}><Plus size={27} /></button>}
     <nav className="bottom-nav" aria-label="メインナビゲーション">
       <button aria-current={screen === 'todo' ? 'page' : undefined} onClick={() => setScreen('todo')}><ClipboardList size={21} />ToDo</button>
       <button aria-current={screen === 'calendar' ? 'page' : undefined} onClick={() => setScreen('calendar')}><CalendarDays size={21} />カレンダー</button>
     </nav>
     {settings && <Settings data={view} onClose={() => setSettings(false)} completed={completed} trash={trash}
+      undated={active.filter(task => task.date === null)} taskActions={actions}
       onGroup={editGroup} openTask={openTask} restore={restore}
       onGroups={ids => save(current => {
         const rank = new Map(ids.map((id, index) => [id, index]))
@@ -216,7 +220,7 @@ export default function App() {
       })}
       purge={task => save(current => ({ ...current, tasks: current.tasks.filter(row => row.id !== task.id || !row.deletedAt) }))}
       onExport={exportData} onImport={importData} />}
-    {adding && <AddTask tab={tab} today={today} groups={data.groups} onClose={() => setAdding(false)}
+    {adding && <AddTask tab={tab} today={today} initialDate={adding.date} groups={data.groups} onClose={() => setAdding(undefined)}
       onAdd={async task => {
         const saved = await save(current => ({ ...current, tasks: [...current.tasks, { ...task,
           groupId: current.groups.some(group => group.id === task.groupId) ? task.groupId : null,
@@ -229,8 +233,6 @@ export default function App() {
       groupName={view.groups.find(group => group.id === detail.task.groupId)?.name ?? '未分類'}
       onClose={() => setDetail(undefined)}
       onSave={changes => patch(detail.task.id, row => row.completed || row.deletedAt ? row : { ...row, ...changes })} />}
-    {picker && <DatePicker today={today} value={picker.date} onChange={date => patch(picker.id, task => ({ ...task, date }))}
-      onClose={() => setPicker(undefined)} />}
     {(error || message || undo) && <div className="toast" role={error ? 'alert' : 'status'}>
       <span>{error || message || '削除しました'}</span>
       {error || message ? <button onClick={() => { setError(''); setMessage('') }}>閉じる</button>

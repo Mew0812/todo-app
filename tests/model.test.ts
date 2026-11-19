@@ -1,12 +1,27 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { backup, belongs, fresh, localDate, maintain, moveTask, offsetDate, restore, retention, type Task } from '../src/data/model.ts'
+import { backup, belongs, fresh, futureDates, localDate, maintain, moveTask, offsetDate, restore, retention, type Task } from '../src/data/model.ts'
 
 const now = new Date(2026, 10, 19, 11)
 const timestamp = now.toISOString()
 const today = localDate(now)
 const yesterday = offsetDate(today, -1)
 const tomorrow = offsetDate(today, 1)
+test('future date range is consecutive across month ends, years and leap days', () => {
+  for (const [today, first, last, count] of [
+    ['2026-11-19', '2026-11-20', '2026-12-31', 42],
+    ['2026-11-30', '2026-12-01', '2026-12-31', 31],
+    ['2026-12-15', '2026-12-16', '2027-01-31', 47],
+    ['2028-01-10', '2028-01-11', '2028-02-29', 50],
+    ['2027-01-10', '2027-01-11', '2027-02-28', 49],
+  ] as const) {
+    const dates = futureDates(today)
+    assert.equal(dates[0], first)
+    assert.equal(dates.at(-1), last)
+    assert.equal(dates.length, count)
+    dates.forEach((date, index) => assert.equal(date, offsetDate(first, index)))
+  }
+})
 const task = (id: string, options: Partial<Task> = {}): Task => ({
   id, title: id, date: yesterday, groupId: null, important: false, note: '', checklist: [],
   completed: false, completedAt: null, deletedAt: null, order: 0, createdAt: timestamp, updatedAt: timestamp, ...options,
@@ -16,7 +31,7 @@ test('overdue tasks roll forward, unscheduled and future tasks keep their dates'
   const result = maintain({ ...fresh(), tasks: [task('a'), task('b', { date: null }), task('c', { date: tomorrow })] }, now)
   assert.deepEqual(result.tasks.map(row => row.date), [today, null, tomorrow])
   assert.deepEqual(result.tasks.filter(row => belongs(row, '今日', today)).map(row => row.id), ['a'])
-  assert.deepEqual(result.tasks.filter(row => belongs(row, '今後の予定', today)).map(row => row.id), ['c'])
+  assert.deepEqual(result.tasks.filter(row => belongs(row, '明日以降', today)).map(row => row.id), ['c'])
   assert.equal(maintain(result, now), result)
 })
 

@@ -53,14 +53,15 @@ svg { flex-shrink: 0; }
 .bottom-nav button { min-width: 87px; min-height: 59px; color: var(--muted); font-size: 11px; display: grid; place-content: center; justify-items: center; gap: 4px; }
 .bottom-nav button[aria-current] { color: var(--accent); font-weight: 700; }
 .fab { z-index: 4; position: fixed; bottom: calc(var(--nav) + 15px); right: max(18px, calc((100% - var(--content)) / 2 + 18px), env(safe-area-inset-right)); width: 57px; height: 57px; border-radius: 18px; display: grid; place-items: center; background: var(--accent); color: #21173b; box-shadow: 0 6px 20px #0008; }
-.date-heading { font-size: 14px; color: var(--accent); margin: 16px 0 4px; }
+.date-heading { font-size: 14px; color: var(--accent); margin: 0 0 4px; }
+.date-heading button { width: 100%; min-height: 44px; text-align: left; font-weight: inherit; }
 .task-group { margin-bottom: 12px; }
 .group-heading button { width: 100%; display: flex; text-align: left; align-items: center; gap: 9px; min-height: 44px; font-weight: 700; font-size: 14px; }
 .group-heading i { width: 3px; height: 17px; border-radius: 3px; }
 .group-heading small { color: var(--muted); font-weight: 500; }
 .group-heading svg { margin-left: auto; color: var(--muted); margin-right: 7px; }
 .group-heading [aria-expanded="false"] svg { transform: rotate(-90deg); }
-.task-card { display: grid; grid-template-columns: 42px minmax(0, 1fr) 42px 42px; align-items: center; min-height: 70px; padding: 4px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 13px; }
+.task-card { display: grid; grid-template-columns: 42px minmax(0, 1fr) 42px 42px; align-items: center; min-height: 52px; padding: 2px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 13px; }
 .task-card.important { background: #26231f; border-color: #44392a; }
 .task-copy { padding: 4px 0; min-width: 0; }
 .task-name { line-height: 1.4; }
@@ -68,7 +69,6 @@ svg { flex-shrink: 0; }
 .text-button { min-height: 30px; }
 .task-meta { display: flex; flex-wrap: wrap; gap: 3px 10px; align-items: center; color: var(--muted); font-size: 12px; }
 .task-meta span { display: flex; align-items: center; gap: 4px; }
-.task-date { color: var(--muted); min-height: 30px; text-align: left; }
 .task-card .icon-button { width: 42px; }
 .complete span { display: grid; place-items: center; border: 1.5px solid #878b9d; width: 21px; height: 21px; border-radius: 50%; }
 .complete svg { opacity: 0; }

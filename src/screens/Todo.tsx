@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { DndContext, DragOverlay, pointerWithin, rectIntersection, useDraggable, useDroppable,
   type CollisionDetection, type DragEndEvent } from '@dnd-kit/core'
 import { ArrowDownUp, Check, ChevronDown, ListChecks, Star, Trash2 } from 'lucide-react'
-import { formatDate, sorts, tabs, type Data, type Tab, type Task } from '../data/model'
+import { formatDate, futureDates, sortKey, sorts, tabs, type Data, type Tab, type Task } from '../data/model'
 import { useLongPressSensors } from '../components/SortableRows'
 
 type Destination = { groupId: string | null; date?: string; index: number; tasks: Task[]; collapsed: boolean }
@@ -20,12 +20,12 @@ export function HistoryRows({ tasks, onOpen, onRestore }:
   </div>)}</div>
 }
 
-type Actions = {
+export type Actions = {
   open: (task: Task) => void; complete: (task: Task) => void; remove: (task: Task) => void
-  importance: (task: Task) => void; date: (task: Task) => void
+  importance: (task: Task) => void
 }
 
-function Card({ task, actions, animation }: { task: Task; actions?: Actions; animation?: string }) {
+export function Card({ task, actions, animation }: { task: Task; actions?: Actions; animation?: string }) {
   const progress = task.checklist.filter(item => item.checked).length
   return <article className={['task-card', task.important ? 'important' : '', animation ?? ''].join(' ')}>
     <button className="icon-button complete" aria-label="完了にする" tabIndex={actions ? 0 : -1}
@@ -33,11 +33,7 @@ function Card({ task, actions, animation }: { task: Task; actions?: Actions; ani
     <div className="task-copy">
       <button className="text-button task-name" tabIndex={actions ? 0 : -1}
         onClick={() => actions?.open(task)}>{task.title}</button>
-      <div className="task-meta">
-        <button className="task-date" tabIndex={actions ? 0 : -1}
-          onClick={() => actions?.date(task)}>{formatDate(task.date)}</button>
-        {task.checklist.length > 0 && <span><ListChecks size={15} />{progress}/{task.checklist.length}</span>}
-      </div>
+      {task.checklist.length > 0 && <div className="task-meta"><span><ListChecks size={15} />{progress}/{task.checklist.length}</span></div>}
     </div>
     <button className="icon-button star" aria-label="重要" aria-pressed={task.important} tabIndex={actions ? 0 : -1}
       onClick={() => actions?.importance(task)}><Star size={19} fill={task.important ? 'currentColor' : 'none'} /></button>
@@ -70,11 +66,11 @@ function DropZone({ id, destination, children, className }:
   return <div ref={setNodeRef} className={(className ?? '') + (isOver ? ' drop-hover' : '')}>{children}</div>
 }
 
-export function Todo({ data, tab, today, visible, completed, onTab, onSort, toggle, move, actions,
+export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAddDate, toggle, move, actions,
   restore, animations, completedOpen, onCompletedToggle }:
   { data: Data; tab: Tab; today: string; visible: Task[]; completed: Task[];
     onTab: (tab: Tab) => void; onSort: (sort: typeof sorts[number]) => void; toggle: (group: string | null) => void
-    move: (task: Task, group: string | null, before?: string) => void; actions: Actions
+    onAddDate: (date: string) => void; move: (task: Task, group: string | null, before?: string) => void; actions: Actions
     restore: (task: Task) => void; animations: Record<string, string>; completedOpen: boolean
     onCompletedToggle: (open: boolean) => void }) {
   const [dragging, setDragging] = useState<Task | null>(null)
@@ -83,9 +79,9 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, togg
   const [destination, setDestination] = useState<Destination | null>(null)
   const [expanded, setExpanded] = useState<string | null | undefined>()
   const sensors = useLongPressSensors()
-  const sort = data.settings.sort[tab]
+  const sort = data.settings.sort[sortKey(tab)]
   const groups = [...data.groups, { id: null, name: '未分類', color: '#777f91', collapsed: data.settings.ungroupedCollapsed }]
-  const dates = tab === '今後の予定' ? [...new Set(visible.map(task => task.date!))].sort() : [undefined]
+  const future = tab === '明日以降'
 
   useEffect(() => {
     if (!dragging || !destination?.collapsed) return
@@ -103,11 +99,33 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, togg
     const remaining = target.tasks.filter(row => row.id !== task.id)
     const former = target.tasks.findIndex(row => row.id === task.id)
     const index = target.index - (former >= 0 && former < target.index ? 1 : 0)
+    if (future) {
+      if (sort === '手動順' && former !== index) move(task, task.groupId, remaining[index]?.id)
+      return
+    }
     if (task.groupId === target.groupId && (sort !== '手動順' || former === index)) return
     if (target.collapsed || (expanded === target.groupId && groups.find(group => group.id === target.groupId)?.collapsed)) {
       toggle(target.groupId)
     }
     move(task, target.groupId, sort === '手動順' ? remaining[index]?.id : undefined)
+  }
+
+  function sortTasks(tasks: Task[]) {
+    return tasks.sort((a, b) => sort === '重要なタスクを先頭に表示'
+      ? Number(b.important) - Number(a.important) || a.order - b.order : a.order - b.order)
+  }
+
+  function taskList(key: string, target: Destination) {
+    const { tasks, date } = target
+    return <div className="task-list">
+      {tasks.map((task, index) => <DragCard key={task.id} task={task} actions={actions} date={date}
+        destination={{ ...target, index }} animation={animations[task.id]} hovered={hovered} height={height} />)}
+      {dragging && (!date || dragging.date === date) &&
+        <DropZone id={'end:' + key} destination={target} className="drop-end">
+          {(hovered === 'end:' + key || hovered === 'heading:' + key) &&
+            <div className="drop-space" style={{ height }} />}
+        </DropZone>}
+    </div>
   }
 
   return <>
@@ -121,9 +139,9 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, togg
         </select>
       </label>
     </div>
-    {!visible.length && <div className="empty">
+    {!future && !visible.length && <div className="empty">
       <span className="empty-icon"><Check size={27} /></span>
-      <p>{tab === '今日' ? '今日のタスクはありません' : tab === 'すべて' ? '未完了のタスクはありません' : '今後の予定はありません'}</p>
+      <p>今日のタスクはありません</p>
     </div>}
     <DndContext sensors={sensors} collisionDetection={collision} onDragEnd={finish} onDragCancel={reset}
       autoScroll={{ threshold: { x: 0, y: 0.16 }, acceleration: 14 }}
@@ -135,37 +153,28 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, togg
         setHovered(String(over?.id ?? ''))
         setDestination(over?.data.current as Destination ?? null)
       }}>
-      {dates.map(date => <section className="date-section" key={date ?? 'all'}>
-        {date && <h2 className="date-heading">{formatDate(date)}</h2>}
-        {groups.map(group => {
-          const tasks = visible.filter(task => task.groupId === group.id && (!date || task.date === date))
-          tasks.sort((a, b) => {
-            if (sort === '予定日の昇順') return (a.date ?? '9999').localeCompare(b.date ?? '9999') || a.order - b.order
-            if (sort === '重要なタスクを先頭に表示') return Number(b.important) - Number(a.important) || a.order - b.order
-            return a.order - b.order
-          })
-          if (!tasks.length && (!dragging || (date && dragging.date !== date))) return null
-          const collapsed = group.collapsed && group.id !== expanded
-          const key = JSON.stringify([date, group.id])
-          const target = { groupId: group.id, date, index: tasks.length, tasks, collapsed }
-          return <div className="task-group" key={key}>
-            <DropZone id={'heading:' + key} destination={target} className="group-heading">
-              <button aria-expanded={!collapsed} onClick={() => toggle(group.id)}>
-                <i style={{ background: group.color }} /><span>{group.name}</span><small>{tasks.length}</small>
-                <ChevronDown size={16} />
-              </button>
-            </DropZone>
-            {!collapsed && <div className="task-list">
-              {tasks.map((task, index) => <DragCard key={task.id} task={task} actions={actions} date={date}
-                destination={{ ...target, index }} animation={animations[task.id]} hovered={hovered} height={height} />)}
-              {dragging && <DropZone id={'end:' + key} destination={target} className="drop-end">
-                {(hovered === 'end:' + key || hovered === 'heading:' + key) &&
-                  <div className="drop-space" style={{ height }} />}
-              </DropZone>}
-            </div>}
-          </div>
-        })}
-      </section>)}
+      {future ? futureDates(today).map(date => {
+        const tasks = sortTasks(visible.filter(task => task.date === date))
+        return <section className="date-section" key={date} data-date={date}>
+          <h2 className="date-heading"><button onClick={() => onAddDate(date)}>{formatDate(date)}</button></h2>
+          {tasks.length > 0 && taskList(date, { date, groupId: null, tasks, index: tasks.length, collapsed: false })}
+        </section>
+      }) : groups.map(group => {
+        const tasks = sortTasks(visible.filter(task => task.groupId === group.id))
+        if (!tasks.length && !dragging) return null
+        const collapsed = group.collapsed && group.id !== expanded
+        const key = JSON.stringify(group.id)
+        const target = { groupId: group.id, index: tasks.length, tasks, collapsed }
+        return <div className="task-group" key={key}>
+          <DropZone id={'heading:' + key} destination={target} className="group-heading">
+            <button aria-expanded={!collapsed} onClick={() => toggle(group.id)}>
+              <i style={{ background: group.color }} /><span>{group.name}</span><small>{tasks.length}</small>
+              <ChevronDown size={16} />
+            </button>
+          </DropZone>
+          {!collapsed && taskList(key, target)}
+        </div>
+      })}
       <DragOverlay dropAnimation={{ duration: 200, easing: 'ease-out' }}>
         {dragging && <div className="floating-card" aria-hidden="true"><Card task={dragging} /></div>}
       </DragOverlay>

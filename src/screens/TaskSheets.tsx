@@ -5,19 +5,19 @@ import { DatePicker } from '../components/Calendar'
 import { Sheet } from '../components/Sheet'
 import { SortableRows } from '../components/SortableRows'
 
-export function AddTask({ tab, today, groups, onClose, onAdd }:
-  { tab: Tab; today: string; groups: Data['groups']; onClose: () => void; onAdd: (task: Task) => Promise<boolean> }) {
-  const future = tab === '今後の予定'
+export function AddTask({ tab, today, initialDate, groups, onClose, onAdd }:
+  { tab: Tab; today: string; initialDate?: string; groups: Data['groups']; onClose: () => void; onAdd: (task: Task) => Promise<boolean> }) {
+  const future = tab === '明日以降'
   const [busy, setBusy] = useState(false)
-  const tomorrow = offsetDate(today, 1)
+  const minimum = future ? offsetDate(today, 1) : today
   return <Sheet title="タスクを追加" compact onClose={onClose}>
     <form className="form-stack" onSubmit={async event => {
       event.preventDefault()
       if (busy) return
       const form = new FormData(event.currentTarget)
       const title = String(form.get('title')).trim()
-      const date = String(form.get('date') ?? '') || null
-      if (!title || (future && (!date || date < tomorrow))) return
+      const date = String(form.get('date') ?? '')
+      if (!title || !date || date < minimum) return
       setBusy(true)
       const now = iso()
       const success = await onAdd({
@@ -28,12 +28,13 @@ export function AddTask({ tab, today, groups, onClose, onAdd }:
       if (success) onClose()
       else setBusy(false)
     }}>
-      <label>タスク名<input name="title" placeholder="やることを入力" required autoFocus={!future} enterKeyHint="done" /></label>
-      {future && <label>予定日<input type="date" name="date" min={tomorrow} required /></label>}
+      <label>タスク名<input name="title" placeholder="やることを入力" required autoFocus={!future || Boolean(initialDate)} enterKeyHint="done" /></label>
+      {future && <label>予定日<input type="date" name="date" min={minimum} defaultValue={initialDate} required /></label>}
       <details>
         <summary>詳細設定</summary>
         <div className="form-stack disclosure-body">
-          {!future && <label>予定日<input type="date" name="date" min={today} defaultValue={tab === '今日' ? today : ''} /></label>}
+          {!future && <label>予定日<input type="date" name="date" min={minimum} defaultValue={today} required
+            onInvalid={event => { const details = event.currentTarget.closest('details'); if (details) details.open = true }} /></label>}
           <label>グループ<select name="group"><option value="">未分類</option>
             {groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
           <label className="check-label"><input name="important" type="checkbox" />重要</label>
