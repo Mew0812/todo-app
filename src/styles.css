@@ -78,9 +78,15 @@ svg { flex-shrink: 0; }
 .drag-card, .sortable-row { -webkit-touch-callout: none; user-select: none; touch-action: pan-y; }
 .drag-card input, .sortable-row input { user-select: text; -webkit-touch-callout: default; }
 .floating-card { transform: scale(1.035); box-shadow: 0 12px 30px #000a; border-radius: 13px; pointer-events: none; }
-.drop-space { border: 1px dashed #6b5c8a; border-radius: 13px; background: #292238; }
-.drop-end { min-height: 28px; }
-.drop-hover { border-radius: 10px; background: #292238; }
+.drag-slot, .date-target, .group-heading { position: relative; }
+.card-target { position: absolute; inset-inline: 0; pointer-events: none; }
+.target-before { top: -3px; bottom: 50%; }
+.target-after { top: 50%; bottom: -4px; }
+.drop-line {
+  position: absolute; z-index: 1; inset-inline: 0; bottom: 0; height: 3px;
+  border-radius: 3px; background: var(--accent); pointer-events: none;
+}
+.target-before .drop-line { top: 0; bottom: auto; }
 .sortable-row.dragging { position: relative; z-index: 2; background: var(--raised); border-radius: 10px; box-shadow: 0 8px 22px #0008; }
 .entering { animation: fade-in .2s ease-out both; }
 .leaving { animation: fade-out .2s ease-in both; pointer-events: none; }

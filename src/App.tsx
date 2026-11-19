@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { CalendarDays, Check, ClipboardList, Plus, Settings2 } from 'lucide-react'
 import { Calendar } from './components/Calendar'
-import { belongs, formatDate, iso, localDate, moveTask, moveWithinDate, sortKey, restore as restoreTask, retention, colors,
+import { belongs, changeDate, formatDate, iso, localDate, moveTask, moveWithinDate, sortKey, restore as restoreTask, retention, colors,
   type Data, type Tab, type Task } from './data/model'
 import { readBackup, update, type Change } from './data/storage'
 import { Settings } from './screens/Settings'
@@ -44,13 +44,21 @@ export default function App() {
   }
   refreshRef.current = () => { setToday(localDate()); void save() }
   useEffect(() => {
-    const refresh = () => { if (!document.hidden) refreshRef.current() }
+    let midnight: number
+    const refresh = () => {
+      if (!document.hidden) refreshRef.current()
+      window.clearTimeout(midnight)
+      const next = new Date()
+      next.setHours(24, 0, 0, 0)
+      midnight = window.setTimeout(refresh, Math.max(1, next.getTime() - Date.now()))
+    }
     refresh()
     const timer = window.setInterval(refresh, 30_000)
     window.addEventListener('pageshow', refresh)
     document.addEventListener('visibilitychange', refresh)
     return () => {
       clearInterval(timer)
+      clearTimeout(midnight)
       clearTimeout(undoTimer.current)
       window.removeEventListener('pageshow', refresh)
       document.removeEventListener('visibilitychange', refresh)
@@ -70,8 +78,9 @@ export default function App() {
     if (row.tab === tab && belongs(row.task, tab, today) && !visible.some(task => task.id === row.task.id)) visible.push(row.task)
   }
   const todaysCompleted = completed.filter(task => !leaving[task.id] && localDate(new Date(task.completedAt!)) === today)
-  const calendarTasks = active.filter(task => task.date === selected).sort((a, b) => a.order - b.order)
-  const dots = new Set(active.flatMap(task => task.date ? [task.date] : []))
+  const calendarDate = (task: Task) => task.date && task.date < today ? today : task.date
+  const calendarTasks = active.filter(task => calendarDate(task) === selected).sort((a, b) => a.order - b.order)
+  const dots = new Set(active.map(calendarDate).filter((date): date is string => date !== null))
   const remind = !backupDismissed && Date.now() - Date.parse(data.settings.lastBackup ?? data.settings.createdAt) >= retention
 
   function patch(id: string, apply: (task: Task) => Task) {
@@ -106,7 +115,7 @@ export default function App() {
     }
   }
   async function restore(task: Task, fromTrash = false) {
-    const saved = await patch(task.id, row => restoreTask(row, localDate(), fromTrash))
+    const saved = await patch(task.id, row => restoreTask(row, fromTrash))
     if (saved) {
       if (saved.tasks.some(row => row.id === task.id && belongs(row, tab, today))) animate(task.id, 'entering')
       if (undo?.id === task.id) setUndo(undefined)
@@ -185,8 +194,12 @@ export default function App() {
         toggle={toggle} restore={restore} animations={animations}
         onAddDate={date => setAdding({ date })}
         onSort={sort => save(current => ({ ...current, settings: { ...current.settings, sort: { ...current.settings.sort, [sortKey(tab)]: sort } } }))}
-        move={(task, group, before) => save(current => tab === '明日以降' && task.date
-          ? moveWithinDate(current, task.id, task.date, before) : moveTask(current, task.id, group, before))}
+        move={async (task, group, before, date) => {
+          const saved = await save(current => date
+            ? (date > localDate() ? moveWithinDate(current, task.id, date, before) : current)
+            : moveTask(current, task.id, group, before))
+          if (saved) animate(task.id, 'entering')
+        }}
         actions={actions} /> : <>
         <div className="calendar-panel"><Calendar today={today} selected={selected} initial={selected}
           onSelect={setSelected} dots={dots} /></div>
@@ -232,7 +245,10 @@ export default function App() {
     {detail && <TaskDetail key={detail.task.id} task={detail.task} today={today}
       groupName={view.groups.find(group => group.id === detail.task.groupId)?.name ?? '未分類'}
       onClose={() => setDetail(undefined)}
-      onSave={changes => patch(detail.task.id, row => row.completed || row.deletedAt ? row : { ...row, ...changes })} />}
+      onSave={changes => patch(detail.task.id, row => {
+        if (row.completed || row.deletedAt) return row
+        return { ...(changes.date ? changeDate(row, changes.date) : row), ...changes }
+      })} />}
     {(error || message || undo) && <div className="toast" role={error ? 'alert' : 'status'}>
       <span>{error || message || '削除しました'}</span>
       {error || message ? <button onClick={() => { setError(''); setMessage('') }}>閉じる</button>

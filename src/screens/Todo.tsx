@@ -5,9 +5,22 @@ import { ArrowDownUp, Check, ChevronDown, ListChecks, Star, Trash2 } from 'lucid
 import { formatDate, futureDates, sortKey, sorts, tabs, type Data, type Tab, type Task } from '../data/model'
 import { useLongPressSensors } from '../components/SortableRows'
 
-type Destination = { groupId: string | null; date?: string; index: number; tasks: Task[]; collapsed: boolean }
+type Destination = {
+  groupId: string | null; date?: string; overdue?: boolean; index: number;
+  tasks: Task[]; collapsed: boolean; importantFirst?: boolean
+}
 const collision: CollisionDetection = args => {
-  const valid = args.droppableContainers.filter(container => container.data.current?.date === args.active.data.current?.date)
+  const active = args.active.data.current
+  const task = active?.task as Task | undefined
+  const valid = args.droppableContainers.filter(container => {
+    const target = container.data.current as Destination | undefined
+    if (!target || Boolean(target.date) !== Boolean(active?.date) || target.overdue !== active?.overdue) return false
+    if (!target.importantFirst || !task) return true
+    // In importance order, the displayed insertion line must match the position after sorting.
+    const before = target.tasks[target.index - 1]
+    const after = target.tasks[target.index]
+    return task.important ? before?.important !== false : after?.important !== true
+  })
   const options = { ...args, droppableContainers: valid }
   return args.pointerCoordinates ? pointerWithin(options) : rectIntersection(options)
 }
@@ -42,40 +55,42 @@ export function Card({ task, actions, animation }: { task: Task; actions?: Actio
   </article>
 }
 
-function DragCard({ task, date, actions, animation, destination, hovered, height }:
-  { task: Task; date?: string; actions: Actions; animation?: string; destination: Destination; hovered: string; height: number }) {
-  const drag = useDraggable({ id: 'task:' + task.id, data: { task, date } })
-  const dropId = 'card:' + task.id
-  const drop = useDroppable({ id: dropId, data: destination })
-  return <div ref={drop.setNodeRef}>
-    {hovered === dropId && !drag.isDragging && <div className="drop-space" style={{ height }} />}
+function DragCard({ task, actions, animation, destination, showTargets }:
+  { task: Task; actions: Actions; animation?: string; destination: Destination; showTargets: boolean }) {
+  const { date, overdue, index } = destination
+  const drag = useDraggable({ id: 'task:' + task.id, data: { task, date, overdue } })
+  return <div className="drag-slot">
     <div ref={drag.setNodeRef} data-drag-row className="drag-card"
-      style={drag.isDragging ? { opacity: 0, pointerEvents: 'none' } : undefined}
+      style={drag.isDragging ? { opacity: .35, pointerEvents: 'none' } : undefined}
       {...drag.attributes} {...drag.listeners}
       onKeyDown={event => { if (event.target === event.currentTarget) drag.listeners?.onKeyDown?.(event) }}
       onContextMenu={event => event.preventDefault()}
       onClick={event => { if (!(event.target as Element).closest('button')) actions.open(task) }}>
       <Card task={task} actions={actions} animation={animation} />
     </div>
+    {showTargets && <>
+      <DropZone id={'before:' + task.id} destination={destination} className="card-target target-before" />
+      <DropZone id={'after:' + task.id} destination={{ ...destination, index: index + 1 }} className="card-target target-after" />
+    </>}
   </div>
 }
 
 function DropZone({ id, destination, children, className }:
   { id: string; destination: Destination; children?: ReactNode; className?: string }) {
   const { setNodeRef, isOver } = useDroppable({ id, data: destination })
-  return <div ref={setNodeRef} className={(className ?? '') + (isOver ? ' drop-hover' : '')}>{children}</div>
+  return <div ref={setNodeRef} className={(className ?? '') + (isOver ? ' drop-active' : '')}>
+    {children}{isOver && <span className="drop-line" aria-hidden="true" />}
+  </div>
 }
 
 export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAddDate, toggle, move, actions,
   restore, animations, completedOpen, onCompletedToggle }:
   { data: Data; tab: Tab; today: string; visible: Task[]; completed: Task[];
     onTab: (tab: Tab) => void; onSort: (sort: typeof sorts[number]) => void; toggle: (group: string | null) => void
-    onAddDate: (date: string) => void; move: (task: Task, group: string | null, before?: string) => void; actions: Actions
+    onAddDate: (date: string) => void; move: (task: Task, group: string | null, before?: string, date?: string) => void; actions: Actions
     restore: (task: Task) => void; animations: Record<string, string>; completedOpen: boolean
     onCompletedToggle: (open: boolean) => void }) {
   const [dragging, setDragging] = useState<Task | null>(null)
-  const [height, setHeight] = useState(72)
-  const [hovered, setHovered] = useState('')
   const [destination, setDestination] = useState<Destination | null>(null)
   const [expanded, setExpanded] = useState<string | null | undefined>()
   const sensors = useLongPressSensors()
@@ -89,7 +104,7 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
     return () => window.clearTimeout(timer)
   }, [dragging, destination])
 
-  function reset() { setDragging(null); setHovered(''); setDestination(null); setExpanded(undefined) }
+  function reset() { setDragging(null); setDestination(null); setExpanded(undefined) }
   function finish({ active, over }: DragEndEvent) {
     reset()
     if (!over) return
@@ -100,7 +115,7 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
     const former = target.tasks.findIndex(row => row.id === task.id)
     const index = target.index - (former >= 0 && former < target.index ? 1 : 0)
     if (future) {
-      if (sort === '手動順' && former !== index) move(task, task.groupId, remaining[index]?.id)
+      if (target.date !== task.date || former !== index) move(task, task.groupId, remaining[index]?.id, target.date)
       return
     }
     if (task.groupId === target.groupId && (sort !== '手動順' || former === index)) return
@@ -111,20 +126,18 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
   }
 
   function sortTasks(tasks: Task[]) {
-    return tasks.sort((a, b) => sort === '重要なタスクを先頭に表示'
-      ? Number(b.important) - Number(a.important) || a.order - b.order : a.order - b.order)
+    return tasks.sort((a, b) => {
+      if (sort === '重要なタスクを先頭に表示') return Number(b.important) - Number(a.important) || a.order - b.order
+      if (sort === '予定日の昇順') return (a.date ?? '').localeCompare(b.date ?? '') || a.order - b.order
+      return a.order - b.order
+    })
   }
 
-  function taskList(key: string, target: Destination) {
-    const { tasks, date } = target
+  function taskList(target: Destination) {
+    const { tasks } = target
     return <div className="task-list">
-      {tasks.map((task, index) => <DragCard key={task.id} task={task} actions={actions} date={date}
-        destination={{ ...target, index }} animation={animations[task.id]} hovered={hovered} height={height} />)}
-      {dragging && (!date || dragging.date === date) &&
-        <DropZone id={'end:' + key} destination={target} className="drop-end">
-          {(hovered === 'end:' + key || hovered === 'heading:' + key) &&
-            <div className="drop-space" style={{ height }} />}
-        </DropZone>}
+      {tasks.map((task, index) => <DragCard key={task.id} task={task} actions={actions}
+        destination={{ ...target, index }} animation={animations[task.id]} showTargets={Boolean(dragging)} />)}
     </div>
   }
 
@@ -147,24 +160,27 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
       autoScroll={{ threshold: { x: 0, y: 0.16 }, acceleration: 14 }}
       onDragStart={({ active }) => {
         setDragging(active.data.current?.task)
-        setHeight(active.rect.current.initial?.height ?? 72)
       }}
       onDragOver={({ over }) => {
-        setHovered(String(over?.id ?? ''))
         setDestination(over?.data.current as Destination ?? null)
       }}>
       {future ? futureDates(today).map(date => {
         const tasks = sortTasks(visible.filter(task => task.date === date))
+        const target = { date, groupId: null, tasks, index: 0, collapsed: false,
+          importantFirst: sort === '重要なタスクを先頭に表示' }
         return <section className="date-section" key={date} data-date={date}>
-          <h2 className="date-heading"><button onClick={() => onAddDate(date)}>{formatDate(date)}</button></h2>
-          {tasks.length > 0 && taskList(date, { date, groupId: null, tasks, index: tasks.length, collapsed: false })}
+          <DropZone id={'date:' + date} destination={target} className="date-target">
+            <h2 className="date-heading"><button onClick={() => { if (!dragging) onAddDate(date) }}>{formatDate(date)}</button></h2>
+          </DropZone>
+          {tasks.length > 0 && taskList(target)}
         </section>
-      }) : groups.map(group => {
-        const tasks = sortTasks(visible.filter(task => task.groupId === group.id))
-        if (!tasks.length && !dragging) return null
+      }) : [false, true].flatMap(overdue => groups.map(group => {
+        const isOverdue = (task: Task) => Boolean(task.date && task.date < today)
+        const tasks = sortTasks(visible.filter(task => task.groupId === group.id && isOverdue(task) === overdue))
+        if (!tasks.length && (!dragging || isOverdue(dragging) !== overdue)) return null
         const collapsed = group.collapsed && group.id !== expanded
-        const key = JSON.stringify(group.id)
-        const target = { groupId: group.id, index: tasks.length, tasks, collapsed }
+        const key = JSON.stringify([overdue, group.id])
+        const target = { groupId: group.id, overdue, index: 0, tasks, collapsed }
         return <div className="task-group" key={key}>
           <DropZone id={'heading:' + key} destination={target} className="group-heading">
             <button aria-expanded={!collapsed} onClick={() => toggle(group.id)}>
@@ -172,9 +188,9 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
               <ChevronDown size={16} />
             </button>
           </DropZone>
-          {!collapsed && taskList(key, target)}
+          {!collapsed && taskList(target)}
         </div>
-      })}
+      }))}
       <DragOverlay dropAnimation={{ duration: 200, easing: 'ease-out' }}>
         {dragging && <div className="floating-card" aria-hidden="true"><Card task={dragging} /></div>}
       </DragOverlay>

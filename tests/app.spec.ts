@@ -161,6 +161,113 @@ test('version 1 backup preserves undated tasks, sorting settings, and dates outs
   await expect(button(page, '表示期間外')).toBeVisible()
 })
 
+test('touch drag inserts at a line within a date and across dates including empty days', async ({ page, context }) => {
+  await page.goto('/')
+  await button(page, '明日以降').click()
+  const [first, second, third] = futureDates(localDate()).map(date => page.locator(`[data-date="${date}"]`))
+  const dialog = page.getByRole('dialog', { name: 'タスクを追加' })
+  for (const [section, name] of [[first, 'ジム'], [first, '複合機'], [third, '買い物']] as const) {
+    await section.locator('h2 button').click()
+    await dialog.getByLabel('タスク名').fill(name)
+    await dialog.getByRole('button', { name: '追加' }).click()
+    await expect(dialog).toBeHidden()
+  }
+  const touch = await context.newCDPSession(page)
+  async function drag(name: string, target: typeof first, yFraction: number) {
+    const source = (await card(page, name).boundingBox())!
+    const end = (await target.boundingBox())!
+    await touch.send('Input.dispatchTouchEvent', {
+      type: 'touchStart', touchPoints: [{ x: source.x + 10, y: source.y + 20 }],
+    })
+    await expect(page.locator('.floating-card')).toBeVisible()
+    await touch.send('Input.dispatchTouchEvent', {
+      type: 'touchMove', touchPoints: [{ x: end.x + 14, y: end.y + end.height * yFraction }],
+    })
+    await expect(page.locator('.drop-line')).toBeVisible()
+    expect((await page.locator('.drop-line').boundingBox())!.height).toBe(3)
+    await expect(page.locator('.drop-space, .drop-hover')).toHaveCount(0)
+    expect((await target.boundingBox())!.height).toBe(end.height)
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await expect(page.locator('.floating-card')).toHaveCount(0)
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+  }
+  await drag('ジム', card(page, '複合機'), .8)
+  await expect(first.locator('.task-name')).toHaveText(['複合機', 'ジム'])
+  await drag('ジム', second.locator('h2 button'), .85)
+  await expect(second.locator('.task-name')).toHaveText(['ジム'])
+  await drag('ジム', card(page, '買い物'), .2)
+  await expect(third.locator('.task-name')).toHaveText(['ジム', '買い物'])
+  await page.reload()
+  await button(page, '明日以降').click()
+  await expect(third.locator('.task-name')).toHaveText(['ジム', '買い物'])
+  await expect(page.locator('.task-name')).toHaveCount(3)
+  const source = (await card(page, 'ジム').boundingBox())!
+  await touch.send('Input.dispatchTouchEvent', {
+    type: 'touchStart', touchPoints: [{ x: source.x + 10, y: source.y + 20 }],
+  })
+  await expect(page.locator('.floating-card')).toBeVisible()
+  const scrollStart = await page.evaluate(() => scrollY)
+  await touch.send('Input.dispatchTouchEvent', {
+    type: 'touchMove', touchPoints: [{ x: source.x + 10, y: (await page.evaluate(() => innerHeight)) - 14 }],
+  })
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(scrollStart)
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] })
+  await expect(page.locator('.floating-card')).toHaveCount(0)
+  await button(page, 'ジム').click()
+  await expect(page.locator('.detail-meta').getByRole('button').first())
+    .toHaveText(formatDate(futureDates(localDate())[2]))
+})
+
+test('midnight promotes due tasks above carryovers and preserves a later manual star change', async ({ page, context }) => {
+  await page.clock.install({ time: new Date(2026, 10, 20, 23, 58) })
+  await page.goto('/')
+  await add(page, '洗濯')
+  await button(page, '明日以降').click()
+  const heading = page.locator('[data-date="2026-11-21"] h2 button')
+  const dialog = page.getByRole('dialog', { name: 'タスクを追加' })
+  for (const name of ['ジム', '買い物']) {
+    await heading.click()
+    await dialog.getByLabel('タスク名').fill(name)
+    await dialog.getByRole('button', { name: '追加' }).click()
+    await expect(dialog).toBeHidden()
+  }
+  await button(page, '今日').click()
+  await expect(page.locator('.task-name')).toHaveText(['洗濯'])
+  await page.clock.fastForward(121_000)
+  await expect(page.locator('.task-name')).toHaveText(['ジム', '買い物', '洗濯'])
+  const star = (target: Page, name: string) => card(target, name).getByRole('button', { name: '重要' })
+  await expect(star(page, 'ジム')).toHaveAttribute('aria-pressed', 'true')
+  await expect(star(page, '買い物')).toHaveAttribute('aria-pressed', 'true')
+  await expect(star(page, '洗濯')).toHaveAttribute('aria-pressed', 'false')
+  await star(page, 'ジム').click()
+  await expect(star(page, 'ジム')).toHaveAttribute('aria-pressed', 'false')
+  await page.close()
+  const reopened = await context.newPage()
+  await reopened.clock.install({ time: new Date(2026, 10, 21, 8) })
+  await reopened.goto('/')
+  await expect(star(reopened, 'ジム')).toHaveAttribute('aria-pressed', 'false')
+  await expect(reopened.locator('.task-name')).toHaveText(['ジム', '買い物', '洗濯'])
+  await button(reopened, '洗濯').click()
+  await expect(reopened.locator('.detail-meta').getByRole('button').first()).toHaveText(formatDate('2026-11-20'))
+})
+
+test('first launch the next day promotes a scheduled task even if the app was closed', async ({ page, context }) => {
+  await page.clock.install({ time: new Date(2026, 10, 20, 20) })
+  await page.goto('/')
+  await button(page, '明日以降').click()
+  await page.locator('[data-date="2026-11-21"] h2 button').click()
+  const dialog = page.getByRole('dialog', { name: 'タスクを追加' })
+  await dialog.getByLabel('タスク名').fill('翌日初回起動')
+  await dialog.getByRole('button', { name: '追加' }).click()
+  await expect(dialog).toBeHidden()
+  await page.close()
+  const next = await context.newPage()
+  await next.clock.install({ time: new Date(2026, 10, 21, 8) })
+  await next.goto('/')
+  await expect(card(next, '翌日初回起動').getByRole('button', { name: '重要' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(next.locator('.task-name')).toHaveCount(1)
+})
+
 test('group management, collapse persistence and touch long-press behavior', async ({ page, context }) => {
   await page.goto('/')
   await button(page, '設定').click()

@@ -17,6 +17,7 @@ const task = z.object({
   important: z.boolean(), note: z.string(), checklist: z.array(item),
   completed: z.boolean(), createdAt: timestamp, updatedAt: timestamp,
   completedAt: timestamp.nullable(), order: z.number().int().nonnegative(), deletedAt: timestamp.nullable(),
+  scheduledOn: date.optional(), promotedOn: date.optional(),
 }).refine(t => t.completed === Boolean(t.completedAt) && unique(t.checklist.map(i => i.id)))
 export const backup = z.object({
   version: z.literal(1),
@@ -82,9 +83,10 @@ export function maintain(data: Data, now = new Date()): Data {
       changed = true
       return []
     }
-    if (!expiry && task.date && task.date < today) {
+    if (!expiry && task.date === today && task.promotedOn !== today
+      && (task.scheduledOn ?? localDate(new Date(task.createdAt))) < today) {
       changed = true
-      return [{ ...task, date: today, updatedAt: now.toISOString() }]
+      return [{ ...task, promotedOn: today, important: true, updatedAt: now.toISOString() }]
     }
     return [task]
   })
@@ -92,29 +94,30 @@ export function maintain(data: Data, now = new Date()): Data {
 }
 export function belongs(task: Task, tab: Tab, today: string) {
   if (task.completed || task.deletedAt || !task.date) return false
-  return tab === '今日' ? task.date === today : task.date > today && task.date <= futureRange(today).end
+  return tab === '今日' ? task.date <= today : task.date > today && task.date <= futureRange(today).end
+}
+
+export function changeDate(task: Task, date: string): Task {
+  return task.date === date ? task : { ...task, date, scheduledOn: localDate() }
 }
 
 export function moveWithinDate(data: Data, id: string, date: string, beforeId?: string): Data {
   const ordered = [...data.tasks].sort((a, b) => a.order - b.order)
   const eligible = (task: Task) => task.date === date && !task.completed && !task.deletedAt
-  const sameDay = ordered.filter(eligible)
-  const index = sameDay.findIndex(task => task.id === id)
-  if (index < 0) return data
-  const [moved] = sameDay.splice(index, 1)
+  const moved = ordered.find(task => task.id === id && task.date && !task.completed && !task.deletedAt)
+  if (!moved) return data
+  const sameDay = ordered.filter(task => eligible(task) && task.id !== id)
   const destination = sameDay.findIndex(task => task.id === beforeId)
-  sameDay.splice(destination < 0 ? sameDay.length : destination, 0, { ...moved, updatedAt: iso() })
+  sameDay.splice(destination < 0 ? sameDay.length : destination, 0, { ...changeDate(moved, date), updatedAt: iso() })
   let next = 0
   const positions = new Map(ordered.map((task, order) => {
-    const row = eligible(task) ? sameDay[next++] : task
+    const row = eligible(task) || task.id === id ? sameDay[next++] : task
     return [row.id, row.order === order ? row : { ...row, order }]
   }))
   return { ...data, tasks: data.tasks.map(task => positions.get(task.id)!) }
 }
-export function restore(task: Task, today: string, fromTrash = false): Task {
-  const restored = fromTrash ? { ...task, deletedAt: null } : { ...task, completed: false, completedAt: null }
-  if (!restored.completed && restored.date && restored.date < today) restored.date = today
-  return restored
+export function restore(task: Task, fromTrash = false): Task {
+  return fromTrash ? { ...task, deletedAt: null } : { ...task, completed: false, completedAt: null }
 }
 export function moveTask(data: Data, id: string, groupId: string | null, beforeId?: string, date?: string): Data {
   const task = data.tasks.find(t => t.id === id)

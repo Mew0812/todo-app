@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { backup, belongs, fresh, futureDates, localDate, maintain, moveTask, offsetDate, restore, retention, type Task } from '../src/data/model.ts'
+import { backup, belongs, fresh, futureDates, localDate, maintain, moveTask, moveWithinDate, offsetDate, restore, retention, type Task } from '../src/data/model.ts'
 
 const now = new Date(2026, 10, 19, 11)
 const timestamp = now.toISOString()
@@ -29,7 +29,7 @@ const task = (id: string, options: Partial<Task> = {}): Task => ({
 
 test('overdue tasks roll forward, unscheduled and future tasks keep their dates', () => {
   const result = maintain({ ...fresh(), tasks: [task('a'), task('b', { date: null }), task('c', { date: tomorrow })] }, now)
-  assert.deepEqual(result.tasks.map(row => row.date), [today, null, tomorrow])
+  assert.deepEqual(result.tasks.map(row => row.date), [yesterday, null, tomorrow])
   assert.deepEqual(result.tasks.filter(row => belongs(row, '今日', today)).map(row => row.id), ['a'])
   assert.deepEqual(result.tasks.filter(row => belongs(row, '明日以降', today)).map(row => row.id), ['c'])
   assert.equal(maintain(result, now), result)
@@ -45,13 +45,44 @@ test('completion and trash expire at the 30-day boundary', () => {
   assert.deepEqual(result.tasks.map(row => row.id), ['recent-completed', 'recent-trash'])
 })
 
-test('restore preserves future or clear dates and rolls past dates forward', () => {
-  for (const [date, expected] of [[null, null], [tomorrow, tomorrow], [yesterday, today]]) {
-    const row = restore(task('x', { date, completed: true, completedAt: timestamp }), today)
-    assert.equal(row.date, expected)
+test('restore preserves original dates and lists past tasks in Today', () => {
+  for (const date of [null, tomorrow, yesterday]) {
+    const row = restore(task('x', { date, completed: true, completedAt: timestamp }))
+    assert.equal(row.date, date)
     assert.equal(row.completedAt, null)
+    assert.equal(belongs(row, '今日', today), date === yesterday)
   }
-  assert.equal(restore(task('x', { deletedAt: timestamp }), today, true).deletedAt, null)
+  assert.equal(restore(task('x', { deletedAt: timestamp }), true).deletedAt, null)
+})
+
+test('promotion is saved once and survives backup restore', () => {
+  const before = { ...fresh(), tasks: [task('overdue'), task('due', { date: tomorrow, order: 1 }),
+    task('closed', { date: tomorrow, completed: true, completedAt: timestamp }),
+    task('trashed', { date: tomorrow, deletedAt: timestamp })] }
+  const next = new Date(2026, 10, 20, 0)
+  const promoted = maintain(before, next)
+  assert.deepEqual(promoted.tasks.map(row => row.important), [false, true, false, false])
+  assert.equal(promoted.tasks[1].promotedOn, tomorrow)
+  promoted.tasks[1].important = false
+  const imported = backup.parse(JSON.parse(JSON.stringify(promoted)))
+  assert.equal(maintain(imported, next), imported)
+  assert.equal(imported.tasks[1].important, false)
+  assert.equal(maintain(imported, new Date(2026, 10, 21)).tasks[1].date, tomorrow)
+})
+
+test('moving to an empty or populated date preserves task details and order on other dates', () => {
+  const source = task('a', { date: today, groupId: 'g', note: 'memo', order: 3,
+    checklist: [{ id: 'i', title: 'item', checked: true }] })
+  const data = { ...fresh(), tasks: [task('b', { date: tomorrow }), task('c', { date: tomorrow, order: 1 }), source] }
+  const moved = moveWithinDate(data, 'a', tomorrow, 'c')
+  const ordered = [...moved.tasks].sort((a, b) => a.order - b.order)
+  assert.deepEqual(ordered.map(row => row.id), ['b', 'a', 'c'])
+  assert.deepEqual([ordered[1].date, ordered[1].groupId, ordered[1].note, ordered[1].checklist],
+    [tomorrow, source.groupId, source.note, source.checklist])
+  const emptyDate = offsetDate(tomorrow, 1)
+  const empty = moveWithinDate(moved, 'a', emptyDate)
+  assert.equal(empty.tasks.filter(row => row.date === emptyDate)[0].id, 'a')
+  assert.equal(new Set(empty.tasks.map(row => row.id)).size, data.tasks.length)
 })
 
 test('manual move changes group and inserts before the destination task', () => {
