@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { CalendarDays, Check, ClipboardList, Plus, Settings2 } from 'lucide-react'
 import { Calendar } from './components/Calendar'
+import { useAddScroll } from './components/useAddScroll'
 import { belongs, changeDate, formatDate, iso, localDate, moveTask, moveWithinDate, sortKey, restore as restoreTask, retention, colors,
   type Data, type Tab, type Task } from './data/model'
 import { readBackup, update, type Change } from './data/storage'
@@ -20,6 +21,7 @@ export default function App() {
   const [selected, setSelected] = useState(localDate)
   const [settings, setSettings] = useState(false)
   const [adding, setAdding] = useState<{ date?: string }>()
+  const addScroll = useAddScroll(Boolean(adding))
   const [completedOpen, setCompletedOpen] = useState(false)
   const [detail, setDetail] = useState<Detail>()
   const [undo, setUndo] = useState<Task>()
@@ -121,10 +123,9 @@ export default function App() {
       if (undo?.id === task.id) setUndo(undefined)
     }
   }
-  function toggle(id: string | null) {
-    return save(current => id === null ? {
-      ...current, settings: { ...current.settings, ungroupedCollapsed: !current.settings.ungroupedCollapsed },
-    } : { ...current, groups: current.groups.map(group => group.id === id ? { ...group, collapsed: !group.collapsed } : group) })
+  function toggle(id: string) {
+    return save(current => ({ ...current, groups: current.groups.map(group => group.id === id
+      ? { ...group, collapsed: !group.collapsed } : group) }))
   }
   function openTask(task: Task) { setDetail({ task, snapshot: data! }) }
   async function editGroup(id: string | null, patch: Partial<Data['groups'][number]>) {
@@ -192,7 +193,7 @@ export default function App() {
       {screen === 'todo' ? <Todo data={view} tab={tab} today={today} visible={visible}
         completed={todaysCompleted} completedOpen={completedOpen} onCompletedToggle={setCompletedOpen} onTab={setTab}
         toggle={toggle} restore={restore} animations={animations}
-        onAddDate={date => setAdding({ date })}
+        onAddDate={(date, anchor) => { addScroll.capture(anchor); setAdding({ date }) }}
         onSort={sort => save(current => ({ ...current, settings: { ...current.settings, sort: { ...current.settings.sort, [sortKey(tab)]: sort } } }))}
         move={async (task, group, before, date) => {
           const saved = await save(current => date
@@ -209,7 +210,8 @@ export default function App() {
         </section>
       </>}
     </main>
-    {screen === 'todo' && <button className="fab" aria-label="タスクを追加" onClick={() => setAdding({})}><Plus size={27} /></button>}
+    {screen === 'todo' && <button className="fab" aria-label="タスクを追加"
+      onClick={() => { addScroll.capture(); setAdding({}) }}><Plus size={27} /></button>}
     <nav className="bottom-nav" aria-label="メインナビゲーション">
       <button aria-current={screen === 'todo' ? 'page' : undefined} onClick={() => setScreen('todo')}><ClipboardList size={21} />ToDo</button>
       <button aria-current={screen === 'calendar' ? 'page' : undefined} onClick={() => setScreen('calendar')}><CalendarDays size={21} />カレンダー</button>
@@ -239,11 +241,14 @@ export default function App() {
           groupId: current.groups.some(group => group.id === task.groupId) ? task.groupId : null,
           order: current.tasks.reduce((max, row) => Math.max(max, row.order + 1), 0),
         }] }))
-        if (saved && belongs(task, tab, today)) animate(task.id, 'entering')
+        if (saved && belongs(task, tab, today)) {
+          if (adding.date === task.date) addScroll.reveal(task.id)
+          animate(task.id, 'entering')
+        }
         return Boolean(saved)
       }} />}
     {detail && <TaskDetail key={detail.task.id} task={detail.task} today={today}
-      groupName={view.groups.find(group => group.id === detail.task.groupId)?.name ?? '未分類'}
+      groupName={view.groups.find(group => group.id === detail.task.groupId)?.name ?? 'グループなし'}
       onClose={() => setDetail(undefined)}
       onSave={changes => patch(detail.task.id, row => {
         if (row.completed || row.deletedAt) return row

@@ -120,6 +120,84 @@ test('future date range updates across midnight without reopening the app', asyn
   await expect(page.locator('.date-section').last()).toHaveAttribute('data-date', '2027-01-31')
 })
 
+test('add sheet keeps the date anchor on save and cancel and preserves FAB scroll position', async ({ page }) => {
+  await page.goto('/')
+  await button(page, '明日以降').click()
+  const heading = page.locator('.date-heading button').nth(10)
+  const dialog = page.getByRole('dialog', { name: 'タスクを追加' })
+  await heading.evaluate(element => window.scrollBy(0, element.getBoundingClientRect().top - 250))
+  const top = () => heading.evaluate(element => element.getBoundingClientRect().top)
+  const originalTop = await top()
+  await heading.tap()
+  await dialog.getByLabel('タスク名').fill('空の日から追加')
+  await page.locator('.date-section').first().evaluate(element => { (element as HTMLElement).style.paddingTop = '45px' })
+  await dialog.getByRole('button', { name: '追加', exact: true }).tap()
+  await expect(dialog).toBeHidden()
+  await expect.poll(async () => Math.abs(await top() - originalTop)).toBeLessThan(2)
+  await expect(heading).toBeInViewport()
+  await expect(card(page, '空の日から追加')).toBeInViewport()
+
+  await heading.tap()
+  await dialog.getByLabel('タスク名').fill('追加済みの日から追加')
+  await dialog.getByRole('button', { name: '追加', exact: true }).tap()
+  await expect(dialog).toBeHidden()
+  await expect.poll(async () => Math.abs(await top() - originalTop)).toBeLessThan(2)
+  await expect(card(page, '追加済みの日から追加')).toBeInViewport()
+
+  await heading.tap()
+  await dialog.getByRole('button', { name: 'シートを閉じる' }).tap()
+  await expect.poll(async () => Math.abs(await top() - originalTop)).toBeLessThan(2)
+  const y = await page.evaluate(() => scrollY)
+  await button(page, 'タスクを追加').tap()
+  await dialog.getByLabel('予定日').fill(futureDates(localDate())[0])
+  await dialog.getByLabel('タスク名').fill('プラスから追加')
+  await dialog.getByRole('button', { name: '追加', exact: true }).tap()
+  await expect(dialog).toBeHidden()
+  // The content above grows on FAB save; the original document offset still wins.
+  await expect.poll(async () => Math.abs(await page.evaluate(() => scrollY) - y)).toBeLessThan(2)
+})
+
+test('add details disclosure preserves focused form fields through a keyboard viewport change', async ({ page }) => {
+  await page.goto('/')
+  await button(page, 'タスクを追加').tap()
+  const dialog = page.getByRole('dialog', { name: 'タスクを追加' })
+  const title = dialog.getByLabel('タスク名')
+  const details = dialog.locator('details')
+  const disclosure = details.locator('summary')
+  await title.fill('詳細を入力するタスク')
+  await expect(title).toBeFocused()
+  await page.evaluate(() => {
+    const viewport = visualViewport!
+    Object.defineProperty(viewport, 'height', { configurable: true, value: 340 })
+    viewport.dispatchEvent(new Event('resize'))
+  })
+  await disclosure.tap()
+  await expect(details).toHaveAttribute('open', '')
+  await expect(dialog).toBeVisible()
+  await expect(title).toHaveValue('詳細を入力するタスク')
+  const date = futureDates(localDate())[0]
+  await dialog.getByLabel('予定日').fill(date)
+  await dialog.getByLabel('重要').check()
+  await dialog.getByLabel('メモ').fill('詳細に書いたメモ')
+  await disclosure.tap()
+  await expect(details).not.toHaveAttribute('open', '')
+  await expect(dialog).toBeVisible()
+  await expect(card(page, '詳細を入力するタスク')).toHaveCount(0)
+  await disclosure.tap()
+  await expect(dialog.getByLabel('予定日')).toHaveValue(date)
+  await expect(dialog.getByLabel('メモ')).toHaveValue('詳細に書いたメモ')
+  await dialog.getByRole('button', { name: '追加', exact: true }).tap()
+  await expect(dialog).toBeHidden()
+  await page.evaluate(() => {
+    const viewport = visualViewport!
+    Reflect.deleteProperty(viewport, 'height')
+    viewport.dispatchEvent(new Event('resize'))
+  })
+  await button(page, '明日以降').tap()
+  await expect(card(page, '詳細を入力するタスク').getByRole('button', { name: '重要' }))
+    .toHaveAttribute('aria-pressed', 'true')
+})
+
 test('version 1 backup preserves undated tasks, sorting settings, and dates outside the range', async ({ page }) => {
   await page.goto('/')
   const today = localDate()
@@ -314,7 +392,54 @@ test('group management, collapse persistence and touch long-press behavior', asy
   await button(page, '生活のメニュー').click()
   await button(page, 'グループを削除').click()
   await button(page, 'シートを閉じる').click()
-  await expect(page.locator('.task-group').filter({ hasText: '未分類' }).getByRole('button', { name: '提出' })).toBeVisible()
+  await expect(page.locator('.ungrouped-tasks').getByRole('button', { name: '提出' })).toBeVisible()
+  await expect(page.getByText('未分類')).toHaveCount(0)
+})
+
+test('legacy group-less tasks stay visible and can be reordered and moved in both directions', async ({ page }) => {
+  await page.goto('/')
+  const legacy = fresh()
+  legacy.settings.ungroupedCollapsed = true
+  legacy.groups.push({ id: 'clean', name: '掃除', color: '#a18bfa', collapsed: false })
+  const time = iso()
+  const base = { date: localDate(), createdAt: time, updatedAt: time, completed: false, completedAt: null,
+    deletedAt: null, note: '保存済みのメモ', important: true, checklist: [], order: 0 }
+  legacy.tasks.push({ ...base, id: 'a', title: '買い物', groupId: null },
+    { ...base, id: 'b', title: '勉強', groupId: null, order: 1 },
+    { ...base, id: 'c', title: '風呂', groupId: 'clean', order: 2 })
+  await button(page, '設定').click()
+  page.once('dialog', dialog => dialog.accept())
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'previous.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(legacy)),
+  })
+  await expect(page.locator('.toast')).toContainText('復元しました')
+  await button(page, '閉じる').click()
+  await expect(page.getByText('未分類')).toHaveCount(0)
+  await button(page, 'シートを閉じる').click()
+  const cards = page.locator('.ungrouped-tasks .task-name')
+  await expect(page.locator('main .task-name')).toHaveText(['買い物', '勉強', '風呂'])
+  async function drag(name: string, destination: ReturnType<Page['locator']>, fraction: number) {
+    const from = (await card(page, name).boundingBox())!
+    await page.mouse.move(from.x + 15, from.y + 15)
+    await page.mouse.down()
+    await expect(page.locator('.floating-card')).toBeVisible()
+    const to = (await destination.boundingBox())!
+    await page.mouse.move(to.x + 15, to.y + to.height * fraction)
+    await expect(page.locator('.drop-line')).toBeVisible()
+    await page.mouse.up()
+    await expect(page.locator('.floating-card')).toHaveCount(0)
+  }
+  await drag('勉強', card(page, '買い物'), .2)
+  await expect(cards).toHaveText(['勉強', '買い物'])
+  await drag('勉強', page.locator('.group-heading'), .5)
+  await expect(page.locator('.task-group .task-name')).toHaveText(['勉強', '風呂'])
+  await drag('買い物', page.locator('.group-heading'), .5)
+  await expect(cards).toHaveCount(0)
+  await drag('風呂', page.locator('.ungrouped-target'), .5)
+  await expect(cards).toHaveText(['風呂'])
+  await page.reload()
+  await expect(cards).toHaveText(['風呂'])
+  await expect(page.locator('main .task-name')).toHaveCount(3)
 })
 
 test('backup is downloadable and import replaces atomically after validation', async ({ page }) => {

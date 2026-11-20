@@ -6,7 +6,7 @@ export default defineConfig({
   workers: 1,
   use: {
     ...devices['iPhone 13'],
-    defaultBrowserType: 'chromium',
+    defaultBrowserType: process.env.PLAYWRIGHT_ENGINE === 'webkit' ? 'webkit' : 'chromium',
     channel: process.env.PLAYWRIGHT_CHANNEL || undefined,
     baseURL: 'http://127.0.0.1:4173',
   },

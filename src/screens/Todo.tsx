@@ -59,7 +59,7 @@ function DragCard({ task, actions, animation, destination, showTargets }:
   { task: Task; actions: Actions; animation?: string; destination: Destination; showTargets: boolean }) {
   const { date, overdue, index } = destination
   const drag = useDraggable({ id: 'task:' + task.id, data: { task, date, overdue } })
-  return <div className="drag-slot">
+  return <div className="drag-slot" id={'task-card-' + task.id}>
     <div ref={drag.setNodeRef} data-drag-row className="drag-card"
       style={drag.isDragging ? { opacity: .35, pointerEvents: 'none' } : undefined}
       {...drag.attributes} {...drag.listeners}
@@ -86,8 +86,8 @@ function DropZone({ id, destination, children, className }:
 export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAddDate, toggle, move, actions,
   restore, animations, completedOpen, onCompletedToggle }:
   { data: Data; tab: Tab; today: string; visible: Task[]; completed: Task[];
-    onTab: (tab: Tab) => void; onSort: (sort: typeof sorts[number]) => void; toggle: (group: string | null) => void
-    onAddDate: (date: string) => void; move: (task: Task, group: string | null, before?: string, date?: string) => void; actions: Actions
+    onTab: (tab: Tab) => void; onSort: (sort: typeof sorts[number]) => void; toggle: (group: string) => void
+    onAddDate: (date: string, anchor: HTMLElement) => void; move: (task: Task, group: string | null, before?: string, date?: string) => void; actions: Actions
     restore: (task: Task) => void; animations: Record<string, string>; completedOpen: boolean
     onCompletedToggle: (open: boolean) => void }) {
   const [dragging, setDragging] = useState<Task | null>(null)
@@ -95,7 +95,7 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
   const [expanded, setExpanded] = useState<string | null | undefined>()
   const sensors = useLongPressSensors()
   const sort = data.settings.sort[sortKey(tab)]
-  const groups = [...data.groups, { id: null, name: '未分類', color: '#777f91', collapsed: data.settings.ungroupedCollapsed }]
+  const groups = data.groups
   const future = tab === '明日以降'
 
   useEffect(() => {
@@ -119,7 +119,8 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
       return
     }
     if (task.groupId === target.groupId && (sort !== '手動順' || former === index)) return
-    if (target.collapsed || (expanded === target.groupId && groups.find(group => group.id === target.groupId)?.collapsed)) {
+    if (target.groupId !== null && (target.collapsed || (expanded === target.groupId
+      && groups.find(group => group.id === target.groupId)?.collapsed))) {
       toggle(target.groupId)
     }
     move(task, target.groupId, sort === '手動順' ? remaining[index]?.id : undefined)
@@ -170,27 +171,40 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
           importantFirst: sort === '重要なタスクを先頭に表示' }
         return <section className="date-section" key={date} data-date={date}>
           <DropZone id={'date:' + date} destination={target} className="date-target">
-            <h2 className="date-heading"><button onClick={() => { if (!dragging) onAddDate(date) }}>{formatDate(date)}</button></h2>
+            <h2 className="date-heading"><button onClick={event => {
+              if (!dragging) onAddDate(date, event.currentTarget)
+            }}>{formatDate(date)}</button></h2>
           </DropZone>
           {tasks.length > 0 && taskList(target)}
         </section>
-      }) : [false, true].flatMap(overdue => groups.map(group => {
+      }) : [false, true].map(overdue => {
         const isOverdue = (task: Task) => Boolean(task.date && task.date < today)
-        const tasks = sortTasks(visible.filter(task => task.groupId === group.id && isOverdue(task) === overdue))
-        if (!tasks.length && (!dragging || isOverdue(dragging) !== overdue)) return null
-        const collapsed = group.collapsed && group.id !== expanded
-        const key = JSON.stringify([overdue, group.id])
-        const target = { groupId: group.id, overdue, index: 0, tasks, collapsed }
-        return <div className="task-group" key={key}>
-          <DropZone id={'heading:' + key} destination={target} className="group-heading">
-            <button aria-expanded={!collapsed} onClick={() => toggle(group.id)}>
-              <i style={{ background: group.color }} /><span>{group.name}</span><small>{tasks.length}</small>
-              <ChevronDown size={16} />
-            </button>
-          </DropZone>
-          {!collapsed && taskList(target)}
+        const tier = visible.filter(task => isOverdue(task) === overdue)
+        const draggingHere = Boolean(dragging && isOverdue(dragging) === overdue)
+        if (!tier.length && !draggingHere) return null
+        const ungrouped = sortTasks(tier.filter(task => task.groupId === null))
+        const ungroupedTarget = { groupId: null, overdue, index: 0, tasks: ungrouped, collapsed: false }
+        return <div key={String(overdue)}>
+          {ungrouped.length > 0 ? <div className="ungrouped-tasks">{taskList(ungroupedTarget)}</div>
+            : draggingHere && <DropZone id={'ungrouped:' + overdue} destination={ungroupedTarget} className="ungrouped-target" />}
+          {groups.map(group => {
+            const tasks = sortTasks(tier.filter(task => task.groupId === group.id))
+            if (!tasks.length && !draggingHere) return null
+            const collapsed = group.collapsed && group.id !== expanded
+            const key = JSON.stringify([overdue, group.id])
+            const target = { groupId: group.id, overdue, index: 0, tasks, collapsed }
+            return <div className="task-group" key={key}>
+              <DropZone id={'heading:' + key} destination={target} className="group-heading">
+                <button aria-expanded={!collapsed} onClick={() => toggle(group.id)}>
+                  <i style={{ background: group.color }} /><span>{group.name}</span><small>{tasks.length}</small>
+                  <ChevronDown size={16} />
+                </button>
+              </DropZone>
+              {!collapsed && taskList(target)}
+            </div>
+          })}
         </div>
-      }))}
+      })}
       <DragOverlay dropAnimation={{ duration: 200, easing: 'ease-out' }}>
         {dragging && <div className="floating-card" aria-hidden="true"><Card task={dragging} /></div>}
       </DragOverlay>

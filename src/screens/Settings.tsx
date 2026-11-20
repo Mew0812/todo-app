@@ -74,7 +74,6 @@ export function Settings(props: Props) {
           <button className="soft">追加</button>
         </form>}
         {error && <p className="error" role="alert">{error}</p>}
-        <div className="settings-row fixed-group"><i className="color-dot" style={{ background: '#777f91' }} />未分類</div>
       </section>
       {props.undated.length > 0 && <details>
         <summary>日付未設定（{props.undated.length}件）</summary>

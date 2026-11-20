@@ -25,17 +25,20 @@ export function AddTask({ tab, today, initialDate, groups, onClose, onAdd }:
         important: form.has('important'), note: String(form.get('note') ?? ''), checklist: [],
         createdAt: now, updatedAt: now, completedAt: null, deletedAt: null, completed: false, order: 0,
       })
-      if (success) onClose()
-      else setBusy(false)
+      if (success) {
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+        onClose()
+      } else setBusy(false)
     }}>
-      <label>タスク名<input name="title" placeholder="やることを入力" required autoFocus={!future || Boolean(initialDate)} enterKeyHint="done" /></label>
+      <label>タスク名<input name="title" placeholder="やることを入力" required
+        data-sheet-autofocus={!future || initialDate ? '' : undefined} enterKeyHint="done" /></label>
       {future && <label>予定日<input type="date" name="date" min={minimum} defaultValue={initialDate} required /></label>}
       <details>
-        <summary>詳細設定</summary>
+        <summary onPointerDown={event => event.preventDefault()}>詳細設定</summary>
         <div className="form-stack disclosure-body">
           {!future && <label>予定日<input type="date" name="date" min={minimum} defaultValue={today} required
             onInvalid={event => { const details = event.currentTarget.closest('details'); if (details) details.open = true }} /></label>}
-          <label>グループ<select name="group"><option value="">未分類</option>
+          <label>グループ<select name="group"><option value="">グループなし</option>
             {groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
           <label className="check-label"><input name="important" type="checkbox" />重要</label>
           <label>メモ<textarea name="note" rows={3} /></label>
