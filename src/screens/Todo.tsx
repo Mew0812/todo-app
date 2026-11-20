@@ -25,11 +25,12 @@ const collision: CollisionDetection = args => {
   return args.pointerCoordinates ? pointerWithin(options) : rectIntersection(options)
 }
 
-export function HistoryRows({ tasks, onOpen, onRestore }:
-  { tasks: Task[]; onOpen: (task: Task) => void; onRestore: (task: Task) => void }) {
+export function HistoryRows({ tasks, onOpen, onRestore, onRemove }:
+  { tasks: Task[]; onOpen: (task: Task) => void; onRestore: (task: Task) => void; onRemove?: (task: Task) => void }) {
   return <div className="history-list">{tasks.map(task => <div className="history-row" key={task.id}>
     <button className="text-button" onClick={() => onOpen(task)}>{task.title}</button>
     <button className="soft" onClick={() => onRestore(task)}>戻す</button>
+    {onRemove && <button className="danger" onClick={() => onRemove(task)}>削除</button>}
   </div>)}</div>
 }
 
@@ -129,7 +130,6 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
   function sortTasks(tasks: Task[]) {
     return tasks.sort((a, b) => {
       if (sort === '重要なタスクを先頭に表示') return Number(b.important) - Number(a.important) || a.order - b.order
-      if (sort === '予定日の昇順') return (a.date ?? '').localeCompare(b.date ?? '') || a.order - b.order
       return a.order - b.order
     })
   }
@@ -212,7 +212,7 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
     {tab === '今日' && completed.length > 0 && <details className="today-completed" open={completedOpen}
       onToggle={event => onCompletedToggle(event.currentTarget.open)}>
       <summary>今日の完了済み（{completed.length}件）</summary>
-      <HistoryRows tasks={completed} onOpen={actions.open} onRestore={restore} />
+      <HistoryRows tasks={completed} onOpen={actions.open} onRestore={restore} onRemove={actions.remove} />
     </details>}
   </>
 }

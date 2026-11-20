@@ -101,3 +101,12 @@ test('backup rejects duplicate IDs, invalid dates, invalid version and orphaned 
     assert.equal(backup.safeParse(invalid).success, false)
   }
 })
+
+test('legacy backup translates date sort to manual and keeps task positions', () => {
+  const data = { ...fresh(), tasks: [task('a', { order: 7 }), task('b', { order: 2 })] }
+  const legacy = { ...data, settings: { ...data.settings,
+    sort: { 今日: '予定日の昇順', すべて: '予定日の昇順', 今後の予定: '重要なタスクを先頭に表示' } } }
+  const migrated = backup.parse(legacy)
+  assert.deepEqual(migrated.settings.sort, { 今日: '手動順', すべて: '手動順', 今後の予定: '重要なタスクを先頭に表示' })
+  assert.deepEqual(migrated.tasks, data.tasks)
+})

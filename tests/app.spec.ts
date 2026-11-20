@@ -34,8 +34,13 @@ test('mobile lifecycle, autosave, dates, reload and offline startup', async ({ p
 
   await button(page, original).click()
   const detail = page.getByRole('dialog', { name: 'タスクの詳細' })
+  await expect(detail.getByLabel('メモ')).toBeVisible()
+  await expect(detail.getByLabel('メモ')).toHaveValue('')
+  await expect(detail.getByLabel('新しい項目')).toBeVisible()
+  await expect(detail.locator('.detail-meta')).not.toContainText('グループなし')
+  await expect(detail.locator('input:focus, textarea:focus')).toHaveCount(0)
+  await detail.getByLabel('メモ').fill('自動保存するメモ')
   await detail.getByLabel('タスク名').fill('買い物')
-  await detail.getByText('チェックリスト').click()
   await detail.getByLabel('新しい項目').fill('牛乳')
   await detail.getByRole('button', { name: 'チェック項目を追加' }).click()
   await detail.getByRole('checkbox', { name: '牛乳' }).check()
@@ -57,6 +62,7 @@ test('mobile lifecycle, autosave, dates, reload and offline startup', async ({ p
   await expect(card(page, '買い物')).toContainText('1/1')
 
   await button(page, '買い物').click()
+  await expect(detail.getByLabel('メモ')).toHaveValue('自動保存するメモ')
   await detail.locator('.detail-meta button').first().click()
   await page.getByRole('dialog', { name: '予定日を選択' }).getByRole('button', { name: '今日', exact: true }).click()
   await detail.getByRole('button', { name: 'シートを閉じる' }).click()
@@ -87,7 +93,9 @@ test('future headings list every date and allow quick-add with an editable, requ
   await page.goto('/')
   await expect(page.locator('.tabs button')).toHaveText(['今日', '明日以降'])
   await expect(button(page, '今日')).toHaveAttribute('aria-pressed', 'true')
+  await expect(button(page, 'タスクを追加')).toBeVisible()
   await button(page, '明日以降').click()
+  await expect(button(page, 'タスクを追加')).toHaveCount(0)
   await expect(page.locator('.date-section')).toHaveCount(dates.length)
   expect(await page.locator('.date-section').evaluateAll(rows => rows.map(row => row.getAttribute('data-date')))).toEqual(dates)
   const section = (date: string) => page.locator(`[data-date="${date}"]`)
@@ -102,7 +110,8 @@ test('future headings list every date and allow quick-add with an editable, requ
   await expect(section(dates[0]).locator('.task-card')).toHaveCount(0)
   await expect(page.locator('.group-heading, .task-meta')).toHaveCount(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  await button(page, 'タスクを追加').click()
+  await section(dates[0]).getByRole('button').click()
+  await dialog.getByLabel('予定日').fill('')
   await dialog.getByLabel('タスク名').fill('日付が必要')
   await dialog.getByRole('button', { name: '追加' }).click()
   await expect(dialog).toBeVisible()
@@ -120,7 +129,73 @@ test('future date range updates across midnight without reopening the app', asyn
   await expect(page.locator('.date-section').last()).toHaveAttribute('data-date', '2027-01-31')
 })
 
-test('add sheet keeps the date anchor on save and cancel and preserves FAB scroll position', async ({ page }) => {
+test('completed rows restore or move to trash with undo at a narrow iPhone width', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 675 })
+  await page.goto('/')
+  const name = '長い完了済みタスク名'.repeat(8)
+  await add(page, name)
+  await card(page, name).getByRole('button', { name: '完了にする' }).click()
+  await page.getByText('今日の完了済み（1件）').tap()
+  const row = page.locator('.today-completed .history-row')
+  await expect(row.getByRole('button')).toHaveText([name, '戻す', '削除'])
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320)
+  const restore = (await row.getByRole('button', { name: '戻す' }).boundingBox())!
+  const remove = (await row.getByRole('button', { name: '削除' }).boundingBox())!
+  expect(restore.x + restore.width).toBeLessThan(remove.x)
+
+  await row.getByRole('button', { name: '削除' }).tap()
+  await expect(row).toHaveCount(0)
+  await button(page, '元に戻す').tap()
+  await expect(row.getByRole('button', { name })).toBeVisible()
+  await row.getByRole('button', { name: '削除' }).tap()
+  await expect(row).toHaveCount(0)
+  await button(page, '設定').tap()
+  const settings = page.getByRole('dialog', { name: '設定' })
+  await settings.getByText('ゴミ箱（1件）').tap()
+  const trash = settings.locator('.history-row').filter({ has: page.locator('.trash-name', { hasText: name }) })
+  await trash.getByRole('button', { name: '戻す' }).tap()
+  await expect(trash).toHaveCount(0)
+  await settings.getByRole('button', { name: 'シートを閉じる' }).tap()
+  await expect(row.getByRole('button', { name })).toBeVisible()
+  await row.getByRole('button', { name: '戻す' }).tap()
+  await expect(card(page, name)).toBeVisible()
+})
+
+test('legacy IndexedDB date sort falls back to manual in both tabs and preserves tasks', async ({ page }) => {
+  await page.goto('/')
+  await add(page, '保存済みのタスク')
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('mytodo', 1)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const transaction = database.transaction('data', 'readwrite')
+    const store = transaction.objectStore('data')
+    const request = store.get('current')
+    request.onsuccess = () => {
+      const data = request.result
+      data.settings.sort.今日 = '予定日の昇順'
+      data.settings.sort.今後の予定 = '予定日の昇順'
+      store.put(data, 'current')
+    }
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve()
+      transaction.onabort = () => reject(transaction.error)
+    })
+    database.close()
+  })
+  await page.reload()
+  await expect(card(page, '保存済みのタスク')).toBeVisible()
+  const sort = page.getByLabel('並び替え')
+  await expect(sort.locator('option')).toHaveText(['手動順', '重要なタスクを先頭に表示'])
+  await expect(sort).toHaveValue('手動順')
+  await button(page, '明日以降').tap()
+  await expect(sort.locator('option')).toHaveText(['手動順', '重要なタスクを先頭に表示'])
+  await expect(sort).toHaveValue('手動順')
+})
+
+test('add sheet keeps the date anchor on save and cancel', async ({ page }) => {
   await page.goto('/')
   await button(page, '明日以降').click()
   const heading = page.locator('.date-heading button').nth(10)
@@ -147,14 +222,6 @@ test('add sheet keeps the date anchor on save and cancel and preserves FAB scrol
   await heading.tap()
   await dialog.getByRole('button', { name: 'シートを閉じる' }).tap()
   await expect.poll(async () => Math.abs(await top() - originalTop)).toBeLessThan(2)
-  const y = await page.evaluate(() => scrollY)
-  await button(page, 'タスクを追加').tap()
-  await dialog.getByLabel('予定日').fill(futureDates(localDate())[0])
-  await dialog.getByLabel('タスク名').fill('プラスから追加')
-  await dialog.getByRole('button', { name: '追加', exact: true }).tap()
-  await expect(dialog).toBeHidden()
-  // The content above grows on FAB save; the original document offset still wins.
-  await expect.poll(async () => Math.abs(await page.evaluate(() => scrollY) - y)).toBeLessThan(2)
 })
 
 test('add details disclosure preserves focused form fields through a keyboard viewport change', async ({ page }) => {
@@ -224,7 +291,6 @@ test('version 1 backup preserves undated tasks, sorting settings, and dates outs
   await expect(detail.getByText('仕事', { exact: true })).toBeVisible()
   await expect(detail.getByLabel('チェック項目名')).toHaveValue('元の項目')
   await expect(detail.getByRole('button', { name: '★ 重要' })).toHaveAttribute('aria-pressed', 'true')
-  await detail.locator('summary').filter({ hasText: 'メモ' }).click()
   await expect(detail.getByLabel('メモ')).toHaveValue('元のメモ')
   await detail.getByRole('button', { name: 'シートを閉じる' }).click()
   await button(page, 'シートを閉じる').click()

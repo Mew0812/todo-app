@@ -186,7 +186,7 @@ export default function App() {
       <div className="brand"><span className="brand-mark"><Check size={17} strokeWidth={3} /></span><span>MyTodo</span></div>
       <button className="icon-button settings-button" aria-label="設定" onClick={() => setSettings(true)}><Settings2 size={20} /></button>
     </header>
-    <main className="main">
+    <main className={screen === 'todo' && tab === '明日以降' ? 'main main-future' : 'main'}>
       <div className="page-title"><h1>{screen === 'todo' ? 'ToDo' : 'カレンダー'}</h1><span>{formatDate(today)}</span></div>
       {remind && <div className="backup-reminder"><button onClick={() => setSettings(true)}>JSONバックアップを保存する</button>
         <button className="icon-button" aria-label="案内を閉じる" onClick={() => setBackupDismissed(true)}>×</button></div>}
@@ -210,7 +210,7 @@ export default function App() {
         </section>
       </>}
     </main>
-    {screen === 'todo' && <button className="fab" aria-label="タスクを追加"
+    {screen === 'todo' && tab === '今日' && <button className="fab" aria-label="タスクを追加"
       onClick={() => { addScroll.capture(); setAdding({}) }}><Plus size={27} /></button>}
     <nav className="bottom-nav" aria-label="メインナビゲーション">
       <button aria-current={screen === 'todo' ? 'page' : undefined} onClick={() => setScreen('todo')}><ClipboardList size={21} />ToDo</button>
@@ -248,7 +248,7 @@ export default function App() {
         return Boolean(saved)
       }} />}
     {detail && <TaskDetail key={detail.task.id} task={detail.task} today={today}
-      groupName={view.groups.find(group => group.id === detail.task.groupId)?.name ?? 'グループなし'}
+      groupName={view.groups.find(group => group.id === detail.task.groupId)?.name}
       onClose={() => setDetail(undefined)}
       onSave={changes => patch(detail.task.id, row => {
         if (row.completed || row.deletedAt) return row

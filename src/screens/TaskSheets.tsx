@@ -50,12 +50,11 @@ export function AddTask({ tab, today, initialDate, groups, onClose, onAdd }:
 }
 
 export function TaskDetail({ task, today, groupName, onClose, onSave }:
-  { task: Task; today: string; groupName: string; onClose: () => void; onSave: (patch: Partial<Task>) => void }) {
+  { task: Task; today: string; groupName?: string; onClose: () => void; onSave: (patch: Partial<Task>) => void }) {
   const [draft, setDraft] = useState(task)
   const [name, setName] = useState(task.title)
   const [newItem, setNewItem] = useState('')
   const [picker, setPicker] = useState(false)
-  const [checklistOpen, setChecklistOpen] = useState(Boolean(task.checklist.length))
   const listInput = useRef<HTMLInputElement>(null)
   const readOnly = draft.completed
   function edit(patch: Partial<Task>) {
@@ -63,7 +62,7 @@ export function TaskDetail({ task, today, groupName, onClose, onSave }:
     onSave(patch)
   }
   return <Sheet title="タスクの詳細" onClose={picker ? () => setPicker(false) : onClose}>
-    <div className="form-stack">
+    <div className="form-stack detail-fields">
       <label>タスク名<input value={name} readOnly={readOnly} enterKeyHint="done" onBlur={() => setName(draft.title)}
         onChange={event => {
           setName(event.target.value)
@@ -74,14 +73,16 @@ export function TaskDetail({ task, today, groupName, onClose, onSave }:
         <button type="button" className="soft" disabled={readOnly} onClick={() => setPicker(true)}>{formatDate(draft.date)}</button>
         <button type="button" className="soft" disabled={readOnly} aria-pressed={draft.important}
           onClick={() => edit({ important: !draft.important })}>{draft.important ? '★' : '☆'} 重要</button>
-        <span>{groupName}</span>
+        {groupName && <span>{groupName}</span>}
       </div>
-      <details><summary>メモ {draft.note.trim() && <span className="muted">入力済み</span>}</summary>
+      <section className="detail-section">
+        <h3>メモ</h3>
         <textarea className="disclosure-body" aria-label="メモ" value={draft.note} readOnly={readOnly} rows={5}
-          onChange={event => edit({ note: event.target.value })} /></details>
-      <details open={checklistOpen} onToggle={event => setChecklistOpen(event.currentTarget.open)}>
-        <summary>チェックリスト {draft.checklist.length > 0 &&
-          <span className="muted">{draft.checklist.filter(item => item.checked).length}/{draft.checklist.length}</span>}</summary>
+          onChange={event => edit({ note: event.target.value })} />
+      </section>
+      <section className="detail-section">
+        <h3>チェックリスト {draft.checklist.length > 0 &&
+          <span className="muted">{draft.checklist.filter(item => item.checked).length}/{draft.checklist.length}</span>}</h3>
         <div className="disclosure-body">
           {readOnly ? draft.checklist.map(item => <div key={item.id} className="checklist-row">
             <input type="checkbox" checked={item.checked} disabled /><span>{item.title}</span>
@@ -107,7 +108,7 @@ export function TaskDetail({ task, today, groupName, onClose, onSave }:
             onChange={event => setNewItem(event.target.value)} />
             <button className="icon-button" aria-label="チェック項目を追加"><Plus /></button></form>}
         </div>
-      </details>
+      </section>
     </div>
     {picker && <DatePicker today={today} value={draft.date} onChange={date => edit({ date })} onClose={() => setPicker(false)} />}
   </Sheet>
