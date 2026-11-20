@@ -22,6 +22,7 @@ const task = z.object({
   completed: z.boolean(), createdAt: timestamp, updatedAt: timestamp,
   completedAt: timestamp.nullable(), order: z.number().int().nonnegative(), deletedAt: timestamp.nullable(),
   scheduledOn: date.optional(), promotedOn: date.optional(),
+  todayTop: z.number().int().nonnegative().optional(),
 }).refine(t => t.completed === Boolean(t.completedAt) && unique(t.checklist.map(i => i.id)))
 export const backup = z.object({
   version: z.literal(1),
@@ -110,8 +111,27 @@ export function belongs(task: Task, tab: Tab, today: string) {
   return tab === '今日' ? task.date <= today : task.date > today && task.date <= futureRange(today).end
 }
 
+export function todayPriority(task: Task, today: string) {
+  return task.date === today && localDate(new Date(task.createdAt)) === today ? task.todayTop ?? 0 : 0
+}
+
+export function addTask(data: Data, task: Task, atTop: boolean): Data {
+  const groupId = data.groups.some(group => group.id === task.groupId) ? task.groupId : null
+  const order = data.tasks.reduce((next, row) => Math.max(next, row.order + 1), 0)
+  if (!atTop) return { ...data, tasks: [...data.tasks, { ...task, groupId, order }] }
+
+  const todayTop = data.tasks.reduce((next, row) => Math.max(next, (row.todayTop ?? 0) + 1), 1)
+  // Make room in the date/group's manual order while retaining existing relative positions.
+  const tasks = data.tasks.map(row => row.groupId === groupId && row.date === task.date
+    ? { ...row, order: row.order + 1 } : row)
+  return {
+    ...data, tasks: [...tasks, { ...task, groupId, order: 0, todayTop }],
+    groups: data.groups.map(group => group.id === groupId && group.collapsed ? { ...group, collapsed: false } : group),
+  }
+}
+
 export function changeDate(task: Task, date: string): Task {
-  return task.date === date ? task : { ...task, date, scheduledOn: localDate() }
+  return task.date === date ? task : { ...task, date, scheduledOn: localDate(), todayTop: undefined }
 }
 
 export function moveWithinDate(data: Data, id: string, date: string, beforeId?: string): Data {
@@ -138,7 +158,9 @@ export function moveTask(data: Data, id: string, groupId: string | null, beforeI
   const ordered = data.tasks.filter(t => t.id !== id && t.groupId === groupId)
     .sort((a, b) => a.order - b.order)
   const index = ordered.findIndex(t => t.id === beforeId)
-  ordered.splice(index < 0 ? ordered.length : index, 0, { ...task, groupId, date: date ?? task.date, updatedAt: iso() })
+  ordered.splice(index < 0 ? ordered.length : index, 0, {
+    ...task, groupId, date: date ?? task.date, todayTop: undefined, updatedAt: iso(),
+  })
   const updates = new Map(ordered.map((t, order) => [t.id, { ...t, order }]))
   return { ...data, tasks: data.tasks.map(t => updates.get(t.id) ?? t) }
 }

@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { DndContext, DragOverlay, pointerWithin, rectIntersection, useDraggable, useDroppable,
   type CollisionDetection, type DragEndEvent } from '@dnd-kit/core'
 import { ArrowDownUp, Check, ChevronDown, ListChecks, Star, Trash2 } from 'lucide-react'
-import { formatDate, futureDates, sortKey, sorts, tabs, type Data, type Tab, type Task } from '../data/model'
+import { formatDate, futureDates, sortKey, sorts, tabs, todayPriority, type Data, type Tab, type Task } from '../data/model'
 import { useLongPressSensors } from '../components/SortableRows'
 
 type Destination = {
@@ -129,7 +129,10 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
 
   function sortTasks(tasks: Task[]) {
     return tasks.sort((a, b) => {
-      if (sort === '重要なタスクを先頭に表示') return Number(b.important) - Number(a.important) || a.order - b.order
+      if (sort === '重要なタスクを先頭に表示') {
+        const priority = future ? 0 : todayPriority(b, today) - todayPriority(a, today)
+        return priority || Number(b.important) - Number(a.important) || a.order - b.order
+      }
       return a.order - b.order
     })
   }
@@ -182,14 +185,19 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
         const tier = visible.filter(task => isOverdue(task) === overdue)
         const draggingHere = Boolean(dragging && isOverdue(dragging) === overdue)
         if (!tier.length && !draggingHere) return null
-        const ungrouped = sortTasks(tier.filter(task => task.groupId === null))
-        const ungroupedTarget = { groupId: null, overdue, index: 0, tasks: ungrouped, collapsed: false }
+        const sections = [null, ...groups].map(group => {
+          const tasks = sortTasks(tier.filter(task => task.groupId === (group?.id ?? null)))
+          const priority = tasks.reduce((highest, task) => Math.max(highest, todayPriority(task, today)), 0)
+          return { group, tasks, priority }
+        }).sort((a, b) => b.priority - a.priority)
         return <div key={String(overdue)}>
-          {ungrouped.length > 0 ? <div className="ungrouped-tasks">{taskList(ungroupedTarget)}</div>
-            : draggingHere && <DropZone id={'ungrouped:' + overdue} destination={ungroupedTarget} className="ungrouped-target" />}
-          {groups.map(group => {
-            const tasks = sortTasks(tier.filter(task => task.groupId === group.id))
+          {sections.map(({ group, tasks }) => {
             if (!tasks.length && !draggingHere) return null
+            if (!group) {
+              const target = { groupId: null, overdue, index: 0, tasks, collapsed: false }
+              return tasks.length > 0 ? <div key="ungrouped" className="ungrouped-tasks">{taskList(target)}</div>
+                : <DropZone key="ungrouped" id={'ungrouped:' + overdue} destination={target} className="ungrouped-target" />
+            }
             const collapsed = group.collapsed && group.id !== expanded
             const key = JSON.stringify([overdue, group.id])
             const target = { groupId: group.id, overdue, index: 0, tasks, collapsed }

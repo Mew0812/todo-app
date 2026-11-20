@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CalendarDays, Check, ClipboardList, Plus, Settings2 } from 'lucide-react'
 import { Calendar } from './components/Calendar'
 import { useAddScroll } from './components/useAddScroll'
-import { belongs, changeDate, formatDate, iso, localDate, moveTask, moveWithinDate, sortKey, restore as restoreTask, retention, colors,
+import { addTask, belongs, changeDate, formatDate, iso, localDate, moveTask, moveWithinDate, sortKey, restore as restoreTask, retention, colors,
   type Data, type Tab, type Task } from './data/model'
 import { readBackup, update, type Change } from './data/storage'
 import { Settings } from './screens/Settings'
@@ -110,10 +110,10 @@ export default function App() {
     const time = iso()
     const saved = await patch(task.id, row => remove ? { ...row, deletedAt: time }
       : { ...row, completed: true, completedAt: time })
-    if (saved && remove) {
+    if (saved && remove && !task.completed) {
       setUndo(task)
       clearTimeout(undoTimer.current)
-      undoTimer.current = window.setTimeout(() => setUndo(undefined), 5000)
+      undoTimer.current = window.setTimeout(() => setUndo(undefined), 2000)
     }
   }
   async function restore(task: Task, fromTrash = false) {
@@ -194,7 +194,16 @@ export default function App() {
         completed={todaysCompleted} completedOpen={completedOpen} onCompletedToggle={setCompletedOpen} onTab={setTab}
         toggle={toggle} restore={restore} animations={animations}
         onAddDate={(date, anchor) => { addScroll.capture(anchor); setAdding({ date }) }}
-        onSort={sort => save(current => ({ ...current, settings: { ...current.settings, sort: { ...current.settings.sort, [sortKey(tab)]: sort } } }))}
+        onSort={sort => save(current => {
+          const key = sortKey(tab)
+          if (current.settings.sort[key] === sort) return current
+          return {
+            ...current,
+            settings: { ...current.settings, sort: { ...current.settings.sort, [key]: sort } },
+            tasks: tab === '今日' ? current.tasks.map(task => task.todayTop
+              ? { ...task, todayTop: undefined } : task) : current.tasks,
+          }
+        })}
         move={async (task, group, before, date) => {
           const saved = await save(current => date
             ? (date > localDate() ? moveWithinDate(current, task.id, date, before) : current)
@@ -237,10 +246,7 @@ export default function App() {
       onExport={exportData} onImport={importData} />}
     {adding && <AddTask tab={tab} today={today} initialDate={adding.date} groups={data.groups} onClose={() => setAdding(undefined)}
       onAdd={async task => {
-        const saved = await save(current => ({ ...current, tasks: [...current.tasks, { ...task,
-          groupId: current.groups.some(group => group.id === task.groupId) ? task.groupId : null,
-          order: current.tasks.reduce((max, row) => Math.max(max, row.order + 1), 0),
-        }] }))
+        const saved = await save(current => addTask(current, task, tab === '今日' && task.date === localDate()))
         if (saved && belongs(task, tab, today)) {
           if (adding.date === task.date) addScroll.reveal(task.id)
           animate(task.id, 'entering')
