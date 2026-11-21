@@ -1,12 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { DndContext, DragOverlay, pointerWithin, rectIntersection, useDraggable, useDroppable,
   type CollisionDetection, type DragEndEvent } from '@dnd-kit/core'
-import { ArrowDownUp, Check, ChevronDown, ListChecks, Star, Trash2 } from 'lucide-react'
-import { formatDate, futureDates, sortKey, sorts, tabs, todayPriority, type Data, type Tab, type Task } from '../data/model'
+import { Check, ChevronDown, ListChecks, Star, Trash2 } from 'lucide-react'
+import { formatDate, futureDates, sortKey, todayPriority, type Data, type Tab, type Task } from '../data/model'
 import { useLongPressSensors } from '../components/SortableRows'
 
 type Destination = {
-  groupId: string | null; date?: string; overdue?: boolean; index: number;
+  groupId: string | null; date?: string; index: number;
   tasks: Task[]; collapsed: boolean; importantFirst?: boolean
 }
 const collision: CollisionDetection = args => {
@@ -14,7 +14,7 @@ const collision: CollisionDetection = args => {
   const task = active?.task as Task | undefined
   const valid = args.droppableContainers.filter(container => {
     const target = container.data.current as Destination | undefined
-    if (!target || Boolean(target.date) !== Boolean(active?.date) || target.overdue !== active?.overdue) return false
+    if (!target || Boolean(target.date) !== Boolean(active?.date)) return false
     if (!target.importantFirst || !task) return true
     // In importance order, the displayed insertion line must match the position after sorting.
     const before = target.tasks[target.index - 1]
@@ -58,8 +58,8 @@ export function Card({ task, actions, animation }: { task: Task; actions?: Actio
 
 function DragCard({ task, actions, animation, destination, showTargets }:
   { task: Task; actions: Actions; animation?: string; destination: Destination; showTargets: boolean }) {
-  const { date, overdue, index } = destination
-  const drag = useDraggable({ id: 'task:' + task.id, data: { task, date, overdue } })
+  const { date, index } = destination
+  const drag = useDraggable({ id: 'task:' + task.id, data: { task, date } })
   return <div className="drag-slot" id={'task-card-' + task.id}>
     <div ref={drag.setNodeRef} data-drag-row className="drag-card"
       style={drag.isDragging ? { opacity: .35, pointerEvents: 'none' } : undefined}
@@ -84,10 +84,10 @@ function DropZone({ id, destination, children, className }:
   </div>
 }
 
-export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAddDate, toggle, move, actions,
+export function Todo({ data, tab, today, visible, completed, onAddDate, toggle, move, actions,
   restore, animations, completedOpen, onCompletedToggle }:
   { data: Data; tab: Tab; today: string; visible: Task[]; completed: Task[];
-    onTab: (tab: Tab) => void; onSort: (sort: typeof sorts[number]) => void; toggle: (group: string) => void
+    toggle: (group: string) => void
     onAddDate: (date: string, anchor: HTMLElement) => void; move: (task: Task, group: string | null, before?: string, date?: string) => void; actions: Actions
     restore: (task: Task) => void; animations: Record<string, string>; completedOpen: boolean
     onCompletedToggle: (open: boolean) => void }) {
@@ -145,17 +145,37 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
     </div>
   }
 
-  return <>
-    <div className="toolbar">
-      <div className="tabs" aria-label="ToDoの表示">
-        {tabs.map(item => <button key={item} aria-pressed={tab === item} onClick={() => onTab(item)}>{item}</button>)}
-      </div>
-      <label className="sort-control" title={sort}><ArrowDownUp size={18} />
-        <select aria-label="並び替え" value={sort} onChange={event => onSort(event.target.value as typeof sorts[number])}>
-          {sorts.map(value => <option key={value}>{value}</option>)}
-        </select>
-      </label>
+  function todayList() {
+    const sections = [null, ...groups].map(group => {
+      const tasks = sortTasks(visible.filter(task => task.groupId === (group?.id ?? null)))
+      const priority = tasks.reduce((highest, task) => Math.max(highest, todayPriority(task, today)), 0)
+      return { group, tasks, priority }
+    }).sort((a, b) => b.priority - a.priority)
+    return <div>
+      {sections.map(({ group, tasks }) => {
+        if (!tasks.length && !dragging) return null
+        if (!group) {
+          const target = { groupId: null, index: 0, tasks, collapsed: false }
+          return tasks.length > 0 ? <div key="ungrouped" className="ungrouped-tasks">{taskList(target)}</div>
+            : <DropZone key="ungrouped" id="ungrouped" destination={target} className="ungrouped-target" />
+        }
+        const collapsed = group.collapsed && group.id !== expanded
+        const key = group.id
+        const target = { groupId: group.id, index: 0, tasks, collapsed }
+        return <div className="task-group" key={'group:' + key}>
+          <DropZone id={'heading:' + key} destination={target} className="group-heading">
+            <button aria-expanded={!collapsed} onClick={() => toggle(group.id)}>
+              <i style={{ background: group.color }} /><span>{group.name}</span><small>{tasks.length}</small>
+              <ChevronDown size={16} />
+            </button>
+          </DropZone>
+          {!collapsed && taskList(target)}
+        </div>
+      })}
     </div>
+  }
+
+  return <>
     {!future && !visible.length && <div className="empty">
       <span className="empty-icon"><Check size={27} /></span>
       <p>今日のタスクはありません</p>
@@ -180,39 +200,7 @@ export function Todo({ data, tab, today, visible, completed, onTab, onSort, onAd
           </DropZone>
           {tasks.length > 0 && taskList(target)}
         </section>
-      }) : [false, true].map(overdue => {
-        const isOverdue = (task: Task) => Boolean(task.date && task.date < today)
-        const tier = visible.filter(task => isOverdue(task) === overdue)
-        const draggingHere = Boolean(dragging && isOverdue(dragging) === overdue)
-        if (!tier.length && !draggingHere) return null
-        const sections = [null, ...groups].map(group => {
-          const tasks = sortTasks(tier.filter(task => task.groupId === (group?.id ?? null)))
-          const priority = tasks.reduce((highest, task) => Math.max(highest, todayPriority(task, today)), 0)
-          return { group, tasks, priority }
-        }).sort((a, b) => b.priority - a.priority)
-        return <div key={String(overdue)}>
-          {sections.map(({ group, tasks }) => {
-            if (!tasks.length && !draggingHere) return null
-            if (!group) {
-              const target = { groupId: null, overdue, index: 0, tasks, collapsed: false }
-              return tasks.length > 0 ? <div key="ungrouped" className="ungrouped-tasks">{taskList(target)}</div>
-                : <DropZone key="ungrouped" id={'ungrouped:' + overdue} destination={target} className="ungrouped-target" />
-            }
-            const collapsed = group.collapsed && group.id !== expanded
-            const key = JSON.stringify([overdue, group.id])
-            const target = { groupId: group.id, overdue, index: 0, tasks, collapsed }
-            return <div className="task-group" key={key}>
-              <DropZone id={'heading:' + key} destination={target} className="group-heading">
-                <button aria-expanded={!collapsed} onClick={() => toggle(group.id)}>
-                  <i style={{ background: group.color }} /><span>{group.name}</span><small>{tasks.length}</small>
-                  <ChevronDown size={16} />
-                </button>
-              </DropZone>
-              {!collapsed && taskList(target)}
-            </div>
-          })}
-        </div>
-      })}
+      }) : todayList()}
       <DragOverlay dropAnimation={{ duration: 200, easing: 'ease-out' }}>
         {dragging && <div className="floating-card" aria-hidden="true"><Card task={dragging} /></div>}
       </DragOverlay>

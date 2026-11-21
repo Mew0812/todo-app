@@ -76,11 +76,9 @@ test('mobile lifecycle, autosave, dates, reload and offline startup', async ({ p
   await button(page, '戻す').click()
   await card(page, '買い物').getByRole('button', { name: '削除', exact: true }).click()
   await button(page, '元に戻す').click()
+  await expect(page.locator('.toast')).toHaveCount(0)
   await expect(card(page, '買い物')).toBeVisible()
 
-  await button(page, 'カレンダー').click()
-  await expect(page.locator('.calendar-grid i')).toHaveCount(1)
-  await expect(button(page, '買い物')).toBeVisible()
   await page.evaluate(async () => { await navigator.serviceWorker.ready })
   await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true)
   await context.setOffline(true)
@@ -91,8 +89,10 @@ test('mobile lifecycle, autosave, dates, reload and offline startup', async ({ p
 test('future headings list every date and allow quick-add with an editable, required date', async ({ page }) => {
   const dates = futureDates(localDate())
   await page.goto('/')
-  await expect(page.locator('.tabs button')).toHaveText(['今日', '明日以降'])
-  await expect(button(page, '今日')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('navigation').getByRole('button')).toHaveText(['今日', '明日以降'])
+  await expect(page.locator('main').getByRole('button', { name: /^(今日|明日以降|カレンダー)$/ })).toHaveCount(0)
+  await expect(button(page, 'カレンダー')).toHaveCount(0)
+  await expect(button(page, '今日')).toHaveAttribute('aria-current', 'page')
   await expect(button(page, 'タスクを追加')).toBeVisible()
   await button(page, '明日以降').click()
   await expect(button(page, 'タスクを追加')).toHaveCount(0)
@@ -357,11 +357,21 @@ test('version 1 backup preserves undated tasks, sorting settings, and dates outs
   await button(page, '明日以降').click()
   await expect(page.getByLabel('並び替え')).toHaveValue('重要なタスクを先頭に表示')
   await expect(button(page, '表示期間外')).toHaveCount(0)
-  await button(page, 'カレンダー').click()
-  await button(page, '次の月').click()
-  await button(page, '次の月').click()
-  await button(page, formatDate(outside)).click()
-  await expect(button(page, '表示期間外')).toBeVisible()
+  expect(await page.evaluate(async () => {
+    return new Promise<string>((resolve, reject) => {
+      const open = indexedDB.open('mytodo', 1)
+      open.onerror = () => reject(open.error)
+      open.onsuccess = () => {
+        const db = open.result
+        const request = db.transaction('data').objectStore('data').get('current')
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          resolve(request.result.tasks.find((task: { id: string }) => task.id === 'later').date)
+          db.close()
+        }
+      }
+    })
+  })).toBe(outside)
 })
 
 test('touch drag inserts at a line within a date and across dates including empty days', async ({ page, context }) => {
@@ -421,7 +431,7 @@ test('touch drag inserts at a line within a date and across dates including empt
     .toHaveText(formatDate(futureDates(localDate())[2]))
 })
 
-test('midnight promotes due tasks above carryovers and preserves a later manual star change', async ({ page, context }) => {
+test('midnight merges carried tasks with today tasks and preserves manual order across reload', async ({ page, context }) => {
   await page.clock.install({ time: new Date(2026, 10, 20, 23, 58) })
   await page.goto('/')
   await add(page, '洗濯')
@@ -437,24 +447,31 @@ test('midnight promotes due tasks above carryovers and preserves a later manual 
   await button(page, '今日').click()
   await expect(page.locator('.task-name')).toHaveText(['洗濯'])
   await page.clock.fastForward(121_000)
-  await expect(page.locator('.task-name')).toHaveText(['ジム', '買い物', '洗濯'])
+  await expect(page.locator('.task-name')).toHaveText(['洗濯', 'ジム', '買い物'])
   const star = (target: Page, name: string) => card(target, name).getByRole('button', { name: '重要' })
-  await expect(star(page, 'ジム')).toHaveAttribute('aria-pressed', 'true')
-  await expect(star(page, '買い物')).toHaveAttribute('aria-pressed', 'true')
-  await expect(star(page, '洗濯')).toHaveAttribute('aria-pressed', 'false')
-  await star(page, 'ジム').click()
   await expect(star(page, 'ジム')).toHaveAttribute('aria-pressed', 'false')
+  await expect(star(page, '買い物')).toHaveAttribute('aria-pressed', 'false')
+  await expect(star(page, '洗濯')).toHaveAttribute('aria-pressed', 'false')
+  const source = (await card(page, '洗濯').boundingBox())!
+  const target = (await card(page, 'ジム').boundingBox())!
+  await page.mouse.move(source.x + 15, source.y + 15)
+  await page.mouse.down()
+  await expect(page.locator('.floating-card')).toBeVisible()
+  await page.mouse.move(target.x + 15, target.y + target.height * .8)
+  await expect(page.locator('.drop-line')).toBeVisible()
+  await page.mouse.up()
+  await expect(page.locator('main .task-name')).toHaveText(['ジム', '洗濯', '買い物'])
   await page.close()
   const reopened = await context.newPage()
   await reopened.clock.install({ time: new Date(2026, 10, 21, 8) })
   await reopened.goto('/')
   await expect(star(reopened, 'ジム')).toHaveAttribute('aria-pressed', 'false')
-  await expect(reopened.locator('.task-name')).toHaveText(['ジム', '買い物', '洗濯'])
+  await expect(reopened.locator('.task-name')).toHaveText(['ジム', '洗濯', '買い物'])
   await button(reopened, '洗濯').click()
-  await expect(reopened.locator('.detail-meta').getByRole('button').first()).toHaveText(formatDate('2026-11-20'))
+  await expect(reopened.locator('.detail-meta').getByRole('button').first()).toHaveText(formatDate('2026-11-21'))
 })
 
-test('first launch the next day promotes a scheduled task even if the app was closed', async ({ page, context }) => {
+test('first launch after several days rolls tasks forward without changing importance', async ({ page, context }) => {
   await page.clock.install({ time: new Date(2026, 10, 20, 20) })
   await page.goto('/')
   await button(page, '明日以降').click()
@@ -465,10 +482,18 @@ test('first launch the next day promotes a scheduled task even if the app was cl
   await expect(dialog).toBeHidden()
   await page.close()
   const next = await context.newPage()
-  await next.clock.install({ time: new Date(2026, 10, 21, 8) })
+  await next.clock.install({ time: new Date(2026, 10, 25, 8) })
   await next.goto('/')
-  await expect(card(next, '翌日初回起動').getByRole('button', { name: '重要' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(card(next, '翌日初回起動').getByRole('button', { name: '重要' })).toHaveAttribute('aria-pressed', 'false')
   await expect(next.locator('.task-name')).toHaveCount(1)
+  await button(next, '翌日初回起動').click()
+  await expect(next.locator('.detail-meta button').first()).toHaveText(formatDate('2026-11-25'))
+  await button(next, 'シートを閉じる').click()
+  await next.clock.setSystemTime(new Date(2026, 10, 28, 8))
+  await next.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(next.locator('.page-title span')).toHaveText(formatDate('2026-11-28'))
+  await button(next, '翌日初回起動').click()
+  await expect(next.locator('.detail-meta button').first()).toHaveText(formatDate('2026-11-28'))
 })
 
 test('group management, collapse persistence and touch long-press behavior', async ({ page, context }) => {

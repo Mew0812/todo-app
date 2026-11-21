@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { CalendarDays, Check, ClipboardList, Plus, Settings2 } from 'lucide-react'
-import { Calendar } from './components/Calendar'
+import { ArrowDownUp, CalendarDays, Check, ClipboardList, Plus, Settings2 } from 'lucide-react'
 import { useAddScroll } from './components/useAddScroll'
-import { addTask, belongs, changeDate, formatDate, iso, localDate, moveTask, moveWithinDate, sortKey, restore as restoreTask, retention, colors,
+import { addTask, belongs, changeDate, formatDate, iso, localDate, moveTask, moveWithinDate, sortKey, sorts, restore as restoreTask, retention, colors,
   type Data, type Tab, type Task } from './data/model'
 import { readBackup, update, type Change } from './data/storage'
 import { Settings } from './screens/Settings'
@@ -17,8 +16,6 @@ export default function App() {
   const [data, setData] = useState<Data>()
   const [today, setToday] = useState(localDate)
   const [tab, setTab] = useState<Tab>('今日')
-  const [screen, setScreen] = useState<'todo' | 'calendar'>('todo')
-  const [selected, setSelected] = useState(localDate)
   const [settings, setSettings] = useState(false)
   const [adding, setAdding] = useState<{ date?: string }>()
   const addScroll = useAddScroll(Boolean(adding))
@@ -37,6 +34,7 @@ export default function App() {
     try {
       const next = await update(change)
       setData(next)
+      setToday(localDate())
       setError('')
       return next
     } catch (cause) {
@@ -44,7 +42,7 @@ export default function App() {
       setError('端末への保存に失敗しました。空き容量とブラウザの設定を確認して、もう一度お試しください。')
     }
   }
-  refreshRef.current = () => { setToday(localDate()); void save() }
+  refreshRef.current = () => { void save() }
   useEffect(() => {
     let midnight: number
     const refresh = () => {
@@ -80,10 +78,27 @@ export default function App() {
     if (row.tab === tab && belongs(row.task, tab, today) && !visible.some(task => task.id === row.task.id)) visible.push(row.task)
   }
   const todaysCompleted = completed.filter(task => !leaving[task.id] && localDate(new Date(task.completedAt!)) === today)
-  const calendarDate = (task: Task) => task.date && task.date < today ? today : task.date
-  const calendarTasks = active.filter(task => calendarDate(task) === selected).sort((a, b) => a.order - b.order)
-  const dots = new Set(active.map(calendarDate).filter((date): date is string => date !== null))
   const remind = !backupDismissed && Date.now() - Date.parse(data.settings.lastBackup ?? data.settings.createdAt) >= retention
+  const sort = view.settings.sort[sortKey(tab)]
+
+  function changeSort(next: typeof sorts[number]) {
+    void save(current => {
+      const key = sortKey(tab)
+      if (current.settings.sort[key] === next) return current
+      return {
+        ...current,
+        settings: { ...current.settings, sort: { ...current.settings.sort, [key]: next } },
+        tasks: tab === '今日' ? current.tasks.map(task => task.todayTop
+          ? { ...task, todayTop: undefined } : task) : current.tasks,
+      }
+    })
+  }
+
+  function switchTab(next: Tab) {
+    if (tab === next) return
+    setTab(next)
+    window.scrollTo(0, 0)
+  }
 
   function patch(id: string, apply: (task: Task) => Task) {
     return save(current => ({ ...current, tasks: current.tasks.map(task => task.id !== id ? task
@@ -186,44 +201,33 @@ export default function App() {
       <div className="brand"><span className="brand-mark"><Check size={17} strokeWidth={3} /></span><span>MyTodo</span></div>
       <button className="icon-button settings-button" aria-label="設定" onClick={() => setSettings(true)}><Settings2 size={20} /></button>
     </header>
-    <main className={screen === 'todo' && tab === '明日以降' ? 'main main-future' : 'main'}>
-      <div className="page-title"><h1>{screen === 'todo' ? 'ToDo' : 'カレンダー'}</h1><span>{formatDate(today)}</span></div>
+    <main className={tab === '明日以降' ? 'main main-future' : 'main'}>
+      <div className="page-title"><h1>ToDo</h1><span>{formatDate(today)}</span>
+        <label className="sort-control" title={sort}><ArrowDownUp size={18} />
+          <select aria-label="並び替え" value={sort} onChange={event => changeSort(event.target.value as typeof sorts[number])}>
+            {sorts.map(value => <option key={value}>{value}</option>)}
+          </select>
+        </label>
+      </div>
       {remind && <div className="backup-reminder"><button onClick={() => setSettings(true)}>JSONバックアップを保存する</button>
         <button className="icon-button" aria-label="案内を閉じる" onClick={() => setBackupDismissed(true)}>×</button></div>}
-      {screen === 'todo' ? <Todo data={view} tab={tab} today={today} visible={visible}
-        completed={todaysCompleted} completedOpen={completedOpen} onCompletedToggle={setCompletedOpen} onTab={setTab}
+      <Todo data={view} tab={tab} today={today} visible={visible}
+        completed={todaysCompleted} completedOpen={completedOpen} onCompletedToggle={setCompletedOpen}
         toggle={toggle} restore={restore} animations={animations}
         onAddDate={(date, anchor) => { addScroll.capture(anchor); setAdding({ date }) }}
-        onSort={sort => save(current => {
-          const key = sortKey(tab)
-          if (current.settings.sort[key] === sort) return current
-          return {
-            ...current,
-            settings: { ...current.settings, sort: { ...current.settings.sort, [key]: sort } },
-            tasks: tab === '今日' ? current.tasks.map(task => task.todayTop
-              ? { ...task, todayTop: undefined } : task) : current.tasks,
-          }
-        })}
         move={async (task, group, before, date) => {
           const saved = await save(current => date
             ? (date > localDate() ? moveWithinDate(current, task.id, date, before) : current)
             : moveTask(current, task.id, group, before))
           if (saved) animate(task.id, 'entering')
         }}
-        actions={actions} /> : <>
-        <div className="calendar-panel"><Calendar today={today} selected={selected} initial={selected}
-          onSelect={setSelected} dots={dots} /></div>
-        <section className="calendar-tasks"><h2>{formatDate(selected)}</h2>
-          {calendarTasks.length ? calendarTasks.map(task => <button key={task.id} className="calendar-task"
-            onClick={() => openTask(task)}>{task.title}</button>) : <p className="muted">この日の予定はありません</p>}
-        </section>
-      </>}
+        actions={actions} />
     </main>
-    {screen === 'todo' && tab === '今日' && <button className="fab" aria-label="タスクを追加"
+    {tab === '今日' && <button className="fab" aria-label="タスクを追加"
       onClick={() => { addScroll.capture(); setAdding({}) }}><Plus size={27} /></button>}
     <nav className="bottom-nav" aria-label="メインナビゲーション">
-      <button aria-current={screen === 'todo' ? 'page' : undefined} onClick={() => setScreen('todo')}><ClipboardList size={21} />ToDo</button>
-      <button aria-current={screen === 'calendar' ? 'page' : undefined} onClick={() => setScreen('calendar')}><CalendarDays size={21} />カレンダー</button>
+      <button aria-current={tab === '今日' ? 'page' : undefined} onClick={() => switchTab('今日')}><ClipboardList size={21} />今日</button>
+      <button aria-current={tab === '明日以降' ? 'page' : undefined} onClick={() => switchTab('明日以降')}><CalendarDays size={21} />明日以降</button>
     </nav>
     {settings && <Settings data={view} onClose={() => setSettings(false)} completed={completed} trash={trash}
       undated={active.filter(task => task.date === null)} taskActions={actions}

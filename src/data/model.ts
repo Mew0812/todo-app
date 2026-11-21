@@ -97,10 +97,9 @@ export function maintain(data: Data, now = new Date()): Data {
       changed = true
       return []
     }
-    if (!expiry && task.date === today && task.promotedOn !== today
-      && (task.scheduledOn ?? localDate(new Date(task.createdAt))) < today) {
+    if (!task.completed && !task.deletedAt && task.date && task.date < today) {
       changed = true
-      return [{ ...task, promotedOn: today, important: true, updatedAt: now.toISOString() }]
+      return [{ ...task, date: today, updatedAt: now.toISOString() }]
     }
     return [task]
   })
@@ -108,7 +107,7 @@ export function maintain(data: Data, now = new Date()): Data {
 }
 export function belongs(task: Task, tab: Tab, today: string) {
   if (task.completed || task.deletedAt || !task.date) return false
-  return tab === '今日' ? task.date <= today : task.date > today && task.date <= futureRange(today).end
+  return tab === '今日' ? task.date === today : task.date > today && task.date <= futureRange(today).end
 }
 
 export function todayPriority(task: Task, today: string) {
@@ -131,7 +130,7 @@ export function addTask(data: Data, task: Task, atTop: boolean): Data {
 }
 
 export function changeDate(task: Task, date: string): Task {
-  return task.date === date ? task : { ...task, date, scheduledOn: localDate(), todayTop: undefined }
+  return task.date === date ? task : { ...task, date, todayTop: undefined }
 }
 
 export function moveWithinDate(data: Data, id: string, date: string, beforeId?: string): Data {

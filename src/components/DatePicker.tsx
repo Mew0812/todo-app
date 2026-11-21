@@ -2,10 +2,8 @@ import { useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { formatDate, localDate, offsetDate, parseDate } from '../data/model'
 
-export function Calendar({ today, selected, onSelect, minimum, dots, initial = today }:
-  { today: string; selected: string | null; onSelect: (date: string) => void
-    minimum?: string; dots?: Set<string>; initial?: string }) {
-  const [month, setMonth] = useState(initial.slice(0, 7) + '-01')
+function DateGrid({ today, selected, onSelect }: { today: string; selected: string | null; onSelect: (date: string) => void }) {
+  const [month, setMonth] = useState(today.slice(0, 7) + '-01')
   const start = useRef<{ x: number; y: number } | null>(null)
   const current = parseDate(month)
   const leading = (current.getDay() + 6) % 7
@@ -40,8 +38,8 @@ export function Calendar({ today, selected, onSelect, minimum, dots, initial = t
         const date = offsetDate(month, i)
         return <button type="button" key={date} className={date === today ? 'is-today' : ''}
           aria-label={formatDate(date)} aria-pressed={selected === date}
-          disabled={Boolean(minimum && date < minimum)} onClick={() => onSelect(date)}>
-          {i + 1}{dots?.has(date) && <i aria-label="予定あり" />}
+          disabled={date < today} onClick={() => onSelect(date)}>
+          {i + 1}
         </button>
       })}
     </div>
@@ -56,7 +54,7 @@ export function DatePicker({ today, value, onChange, onClose }:
   }
   return <div className="popover-backdrop" onClick={onClose}>
     <div className="date-popover" role="dialog" aria-label="予定日を選択" onClick={event => event.stopPropagation()}>
-      <Calendar today={today} selected={value} minimum={today} onSelect={select} />
+      <DateGrid today={today} selected={value} onSelect={select} />
       <div className="date-shortcuts">
         <button type="button" onClick={() => select(today)}>今日</button>
         <button type="button" onClick={() => select(offsetDate(today, 1))}>明日</button>

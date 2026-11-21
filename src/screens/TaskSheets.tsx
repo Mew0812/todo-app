@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { formatDate, iso, offsetDate, type Data, type Tab, type Task } from '../data/model'
-import { DatePicker } from '../components/Calendar'
+import { DatePicker } from '../components/DatePicker'
 import { Sheet } from '../components/Sheet'
 import { SortableRows } from '../components/SortableRows'
 

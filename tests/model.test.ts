@@ -29,7 +29,7 @@ const task = (id: string, options: Partial<Task> = {}): Task => ({
 
 test('overdue tasks roll forward, unscheduled and future tasks keep their dates', () => {
   const result = maintain({ ...fresh(), tasks: [task('a'), task('b', { date: null }), task('c', { date: tomorrow })] }, now)
-  assert.deepEqual(result.tasks.map(row => row.date), [yesterday, null, tomorrow])
+  assert.deepEqual(result.tasks.map(row => row.date), [today, null, tomorrow])
   assert.deepEqual(result.tasks.filter(row => belongs(row, '今日', today)).map(row => row.id), ['a'])
   assert.deepEqual(result.tasks.filter(row => belongs(row, '明日以降', today)).map(row => row.id), ['c'])
   assert.equal(maintain(result, now), result)
@@ -45,31 +45,34 @@ test('completion and trash expire at the 30-day boundary', () => {
   assert.deepEqual(result.tasks.map(row => row.id), ['recent-completed', 'recent-trash'])
 })
 
-test('restore preserves original dates and lists past tasks in Today', () => {
+test('restore retains original dates until active rollover', () => {
   for (const date of [null, tomorrow, yesterday]) {
     const row = restore(task('x', { date, completed: true, completedAt: timestamp }))
     assert.equal(row.date, date)
     assert.equal(row.completedAt, null)
-    assert.equal(belongs(row, '今日', today), date === yesterday)
+    assert.equal(belongs(maintain({ ...fresh(), tasks: [row] }, now).tasks[0], '今日', today), date === yesterday)
   }
   assert.equal(restore(task('x', { deletedAt: timestamp }), true).deletedAt, null)
 })
 
-test('promotion is saved once and survives backup restore', () => {
-  const before = { ...fresh(), tasks: [task('overdue'), task('due', { date: tomorrow, order: 1 }),
-    task('closed', { date: tomorrow, completed: true, completedAt: timestamp }),
-    task('trashed', { date: tomorrow, deletedAt: timestamp })] }
+test('rollover preserves stars, order, and the dates of completed and deleted tasks', () => {
+  const before = { ...fresh(), tasks: [
+    task('overdue', { important: true, order: 4, note: 'keep' }),
+    task('due', { date: tomorrow, order: 2 }),
+    task('closed', { completed: true, completedAt: timestamp }),
+    task('trashed', { deletedAt: timestamp }),
+  ] }
   const next = new Date(2026, 10, 20, 0)
-  const promoted = maintain(before, next)
-  assert.deepEqual(promoted.tasks.map(row => row.important), [false, true, false, false])
-  assert.equal(promoted.tasks[1].promotedOn, tomorrow)
-  promoted.tasks[1].important = false
-  const imported = backup.parse(JSON.parse(JSON.stringify(promoted)))
+  const rolled = maintain(before, next)
+  assert.deepEqual(rolled.tasks.map(row => row.date), [tomorrow, tomorrow, yesterday, yesterday])
+  assert.deepEqual(rolled.tasks.map(row => row.important), [true, false, false, false])
+  assert.deepEqual(rolled.tasks.map(row => row.order), [4, 2, 0, 0])
+  assert.equal(rolled.tasks[0].note, 'keep')
+  assert.equal(rolled.tasks[2], before.tasks[2])
+  assert.equal(rolled.tasks[3], before.tasks[3])
+  const imported = backup.parse(JSON.parse(JSON.stringify(rolled)))
   assert.equal(maintain(imported, next), imported)
-  assert.equal(imported.tasks[1].important, false)
-  assert.equal(maintain(imported, new Date(2026, 10, 21)).tasks[1].date, tomorrow)
 })
-
 test('moving to an empty or populated date preserves task details and order on other dates', () => {
   const source = task('a', { date: today, groupId: 'g', note: 'memo', order: 3,
     checklist: [{ id: 'i', title: 'item', checked: true }] })
