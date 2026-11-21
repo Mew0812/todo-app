@@ -290,7 +290,9 @@ test('native swipes switch screens, preserve scroll, and leave sheets and edge g
   await expect(card(page, '触れたカード')).toBeVisible()
   await swipe(75, 310, 240, 0)
   await expect(heading).toHaveText('今日')
-  await button(page, '触れたカード').tap()
+  await page.locator('.today-content').evaluate(element =>
+    Promise.all(element.getAnimations().map(animation => animation.finished)))
+  await button(page, '触れたカード').click()
   const dialog = page.getByRole('dialog', { name: 'タスクの詳細' })
   const sheet = (await dialog.boundingBox())!
   await swipe(310, sheet.y + 80, -210, 0)
