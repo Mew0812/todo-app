@@ -6,6 +6,8 @@ import { addTask, belongs, changeDate, formatDate, iso, localDate, moveTask, mov
   type Data, type Tab, type Task } from './data/model'
 import { readBackup, update, type Change } from './data/storage'
 import { Settings } from './screens/Settings'
+import { useCloudBackup } from './cloud/useCloudBackup'
+import { CloudBackupPanel } from './cloud/CloudBackupPanel'
 import { AddTask, TaskDetail } from './screens/TaskSheets'
 import { Todo, type Actions } from './screens/Todo'
 
@@ -28,6 +30,11 @@ export default function App() {
   const [backupDismissed, setBackupDismissed] = useState(false)
   const [animations, setAnimations] = useState<Record<string, string>>({})
   const [leaving, setLeaving] = useState<Record<string, Leaving>>({})
+  const cloud = useCloudBackup(Boolean(data), restored => {
+    setData(restored)
+    setToday(localDate())
+    resetAfterRestore()
+  })
   const switched = useRef(false)
   const swipe = useScreenSwipe(tab, Boolean(settings || adding || detail), next => {
     switched.current = true
@@ -163,16 +170,20 @@ export default function App() {
       const imported = readBackup(await file.text())
       if (!confirm('現在のタスク・グループ・設定をすべてバックアップの内容で置き換えますか？')) return
       if (await save(() => imported)) {
-        setUndo(undefined)
-        setBackupDismissed(false)
-        setCompletedOpen(false)
-        setLeaving({})
-        setAnimations({})
+        resetAfterRestore()
         setMessage('バックアップを復元しました')
       }
     } catch {
       setMessage('バックアップを読み込めません。MyTodoから書き出したJSONファイルを選んでください。')
     }
+  }
+
+  function resetAfterRestore() {
+    setUndo(undefined)
+    setBackupDismissed(false)
+    setCompletedOpen(false)
+    setLeaving({})
+    setAnimations({})
   }
 
   const actions: Actions = {
@@ -223,7 +234,8 @@ export default function App() {
         }
       })}
       purge={task => save(current => ({ ...current, tasks: current.tasks.filter(row => row.id !== task.id || !row.deletedAt) }))}
-      onExport={exportData} onImport={importData} />}
+      onExport={exportData} onImport={importData}
+      cloudBackup={<CloudBackupPanel key={cloud.user?.id ?? 'guest'} cloud={cloud} />} />}
     {adding && <AddTask tab={tab} today={today} initialDate={adding.date} groups={data.groups} onClose={() => setAdding(undefined)}
       onAdd={async task => {
         const saved = await save(current => addTask(current, task, tab === '今日' && task.date === localDate()))

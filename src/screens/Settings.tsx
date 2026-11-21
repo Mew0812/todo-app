@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { Download, Ellipsis, Plus, Upload } from 'lucide-react'
 import { Sheet } from '../components/Sheet'
 import { SortableRows } from '../components/SortableRows'
@@ -13,6 +13,7 @@ type Props = {
   undated: Task[]; taskActions: Actions
   openTask: (task: Task) => void; restore: (task: Task, trash?: boolean) => void; purge: (task: Task) => void
   onExport: () => void; onImport: (file: File) => void
+  cloudBackup: ReactNode
 }
 
 function GroupRow({ group, groups, save, remove }: {
@@ -108,6 +109,7 @@ export function Settings(props: Props) {
           }} />
         </div>
       </section>
+      {props.cloudBackup}
     </div>
   </Sheet>
 }

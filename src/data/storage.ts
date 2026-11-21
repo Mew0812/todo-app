@@ -44,3 +44,48 @@ export async function update(change: Change = data => data): Promise<Data> {
 export function readBackup(contents: string) {
   return backup.parse(JSON.parse(contents))
 }
+
+export async function readLocalValue<T>(key: string): Promise<T | undefined> {
+  const database = await open()
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction('data')
+    const request = tx.objectStore('data').get(key)
+    tx.oncomplete = () => resolve(request.result)
+    tx.onabort = () => reject(tx.error)
+  })
+}
+
+export async function writeLocalValue(key: string, value: unknown): Promise<void> {
+  const database = await open()
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction('data', 'readwrite')
+    tx.objectStore('data').put(value, key)
+    tx.oncomplete = () => resolve()
+    tx.onabort = () => reject(tx.error)
+  })
+}
+
+export async function restoreCloud(value: Data, key: string, meta: unknown, allowed: () => boolean): Promise<Data> {
+  const next = backup.parse(value)
+  const database = await open()
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction('data', 'readwrite')
+    const store = tx.objectStore('data')
+    const request = store.get('current')
+    let failure: unknown
+    request.onsuccess = () => {
+      try {
+        if (!allowed()) throw new Error('ログイン状態が変わりました。')
+        if (request.result === undefined) throw new Error('端末の現在のデータを確認できません。')
+        store.put(request.result, key + ':before-restore')
+        store.put(next, 'current')
+        store.put(meta, key)
+      } catch (error) {
+        failure = error
+        tx.abort()
+      }
+    }
+    tx.oncomplete = () => resolve(next)
+    tx.onabort = () => reject(failure ?? tx.error)
+  })
+}
