@@ -4,6 +4,22 @@ import { formatDate, fresh, futureDates, iso, localDate, offsetDate } from '../s
 const button = (page: Page, name: string) => page.getByRole('button', { name, exact: true })
 const card = (page: Page, name: string) => page.locator('.task-card').filter({ has: button(page, name) })
 
+async function swipeTo(page: Page, tab: '今日' | '明日以降') {
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  await page.locator('main').evaluate((target, to) => {
+    const right = to === '今日'
+    for (const [type, x] of [['touchstart', right ? 70 : 300], ['touchmove', right ? 190 : 180],
+      ['touchend', right ? 300 : 70]] as const) {
+      const point = new Touch({ target, identifier: 1, clientX: x, clientY: 180 })
+      target.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true,
+        touches: type === 'touchend' ? [] : [point], changedTouches: [point] }))
+    }
+  }, tab)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(tab)
+  await page.locator('.today-content, .future-content').evaluate(element =>
+    Promise.all(element.getAnimations().map(animation => animation.finished)))
+}
+
 async function add(page: Page, title: string, group?: string) {
   await button(page, 'タスクを追加').click()
   const sheet = page.getByRole('dialog', { name: 'タスクを追加' })
@@ -58,7 +74,7 @@ test('mobile lifecycle, autosave, dates, reload and offline startup', async ({ p
   await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
   await expect(detail).toBeHidden()
   await expect(button(page, '買い物')).toHaveCount(0)
-  await button(page, '明日以降').click()
+  await swipeTo(page, '明日以降')
   await expect(card(page, '買い物')).toContainText('1/1')
 
   await button(page, '買い物').click()
@@ -67,7 +83,7 @@ test('mobile lifecycle, autosave, dates, reload and offline startup', async ({ p
   await page.getByRole('dialog', { name: '予定日を選択' }).getByRole('button', { name: '今日', exact: true }).click()
   await detail.getByRole('button', { name: 'シートを閉じる' }).click()
   await expect(button(page, '買い物')).toHaveCount(0)
-  await button(page, '今日').click()
+  await swipeTo(page, '今日')
   await card(page, '買い物').getByRole('button', { name: '完了にする' }).click()
   await page.getByText('今日の完了済み（1件）').click()
   await button(page, '買い物').click()
@@ -89,12 +105,12 @@ test('mobile lifecycle, autosave, dates, reload and offline startup', async ({ p
 test('future headings list every date and allow quick-add with an editable, required date', async ({ page }) => {
   const dates = futureDates(localDate())
   await page.goto('/')
-  await expect(page.getByRole('navigation').getByRole('button')).toHaveText(['今日', '明日以降'])
+  await expect(page.getByRole('navigation')).toHaveCount(0)
   await expect(page.locator('main').getByRole('button', { name: /^(今日|明日以降|カレンダー)$/ })).toHaveCount(0)
   await expect(button(page, 'カレンダー')).toHaveCount(0)
-  await expect(button(page, '今日')).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('今日')
   await expect(button(page, 'タスクを追加')).toBeVisible()
-  await button(page, '明日以降').click()
+  await swipeTo(page, '明日以降')
   await expect(button(page, 'タスクを追加')).toHaveCount(0)
   await expect(page.locator('.date-section')).toHaveCount(dates.length)
   expect(await page.locator('.date-section').evaluateAll(rows => rows.map(row => row.getAttribute('data-date')))).toEqual(dates)
@@ -121,7 +137,7 @@ test('future headings list every date and allow quick-add with an editable, requ
 test('future date range updates across midnight without reopening the app', async ({ page }) => {
   await page.clock.install({ time: new Date(2026, 10, 30, 23, 59, 50) })
   await page.goto('/')
-  await button(page, '明日以降').click()
+  await swipeTo(page, '明日以降')
   await expect(page.locator('.date-section').first()).toHaveAttribute('data-date', '2026-12-01')
   await expect(page.locator('.date-section').last()).toHaveAttribute('data-date', '2026-12-31')
   await page.clock.fastForward(31_000)
@@ -195,15 +211,13 @@ test('unfinished deletion offers undo for exactly two seconds and still supports
   await expect(page.locator('.toast')).toHaveCount(0)
 })
 
-test('new Today tasks lead the list with their group intact until the sort mode changes', async ({ page }) => {
+test('new Today tasks lead the list with their group intact', async ({ page }) => {
   await page.goto('/')
   await button(page, '設定').tap()
   await createGroup(page, '仕事')
   await button(page, 'シートを閉じる').tap()
   await add(page, '既存の重要タスク', '仕事')
   await card(page, '既存の重要タスク').getByRole('button', { name: '重要', exact: true }).tap()
-  const sort = page.getByRole('combobox', { name: '並び替え' })
-  await sort.selectOption('重要なタスクを先頭に表示')
   await add(page, '新しいグループなし')
   const names = page.locator('main .task-name')
   await expect(names.first()).toHaveText('新しいグループなし')
@@ -214,13 +228,81 @@ test('new Today tasks lead the list with their group intact until the sort mode 
     .toHaveText(['新しい仕事', '既存の重要タスク'])
   await page.reload()
   await expect(names.first()).toHaveText('新しい仕事')
-  await sort.selectOption('手動順')
-  await expect(names).toHaveText(['新しいグループなし', '新しい仕事', '既存の重要タスク'])
-  await sort.selectOption('重要なタスクを先頭に表示')
-  await expect(names).toHaveText(['新しいグループなし', '既存の重要タスク', '新しい仕事'])
 })
 
-test('legacy IndexedDB date sort falls back to manual in both tabs and preserves tasks', async ({ page }) => {
+test('a star moves a task once, and later drag, edit, and unstar preserve manual order', async ({ page }) => {
+  await page.goto('/')
+  await add(page, '先に追加')
+  await add(page, '後で追加')
+  const names = page.locator('main .drag-slot .task-name')
+  const star = card(page, '先に追加').getByRole('button', { name: '重要', exact: true })
+  await star.tap()
+  await expect(names).toHaveText(['先に追加', '後で追加'])
+  const from = (await card(page, '先に追加').boundingBox())!
+  const to = (await card(page, '後で追加').boundingBox())!
+  await page.mouse.move(from.x + 15, from.y + 20)
+  await page.mouse.down()
+  await expect(page.locator('.floating-card')).toBeVisible()
+  await page.mouse.move(to.x + 15, to.y + to.height * .8)
+  await expect(page.locator('.drag-slot').filter({ has: button(page, '後で追加') })
+    .locator('.target-after .drop-line')).toBeVisible()
+  await page.mouse.up()
+  await expect(names).toHaveText(['後で追加', '先に追加'])
+  await page.reload()
+  await expect(star).toHaveAttribute('aria-pressed', 'true')
+  await expect(names).toHaveText(['後で追加', '先に追加'])
+  await star.tap()
+  await expect(star).toHaveAttribute('aria-pressed', 'false')
+  await expect(names).toHaveText(['後で追加', '先に追加'])
+  await button(page, '先に追加').tap()
+  await page.getByLabel('メモ').fill('位置はそのまま')
+  await button(page, 'シートを閉じる').tap()
+  await expect(names).toHaveText(['後で追加', '先に追加'])
+})
+
+test('native swipes switch screens, preserve scroll, and leave sheets and edge gestures alone', async ({ page, context }) => {
+  await page.goto('/')
+  await add(page, '触れたカード')
+  const touch = await context.newCDPSession(page)
+  async function swipe(x: number, y: number, dx: number, dy: number) {
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+    for (const fraction of [.2, .45, .75, 1]) {
+      await touch.send('Input.dispatchTouchEvent', {
+        type: 'touchMove', touchPoints: [{ x: x + dx * fraction, y: y + dy * fraction }],
+      })
+    }
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  }
+  const heading = page.getByRole('heading', { level: 1 })
+  const bounds = (await card(page, '触れたカード').boundingBox())!
+  await swipe(310, bounds.y + 25, -220, 0)
+  await expect(heading).toHaveText('明日以降')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await swipe(300, 450, -220, 0)
+  await expect(heading).toHaveText('明日以降')
+  await swipe(150, 650, 0, -340)
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0)
+  const y = await page.evaluate(() => scrollY)
+  await swipe(8, 420, 230, 0)
+  await expect(heading).toHaveText('明日以降')
+  await swipe(75, 420, 240, 0)
+  await expect(heading).toHaveText('今日')
+  await expect(card(page, '触れたカード')).toBeVisible()
+  await swipe(75, 310, 240, 0)
+  await expect(heading).toHaveText('今日')
+  await button(page, '触れたカード').tap()
+  const dialog = page.getByRole('dialog', { name: 'タスクの詳細' })
+  const sheet = (await dialog.boundingBox())!
+  await swipe(310, sheet.y + 80, -210, 0)
+  await expect(dialog).toBeVisible()
+  await expect(heading).toHaveText('今日')
+  await button(page, 'シートを閉じる').tap()
+  await swipe(310, 200, -240, 0)
+  await expect(heading).toHaveText('明日以降')
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThanOrEqual(y)
+})
+
+test('legacy IndexedDB preferences are ignored and tasks are retained', async ({ page }) => {
   await page.goto('/')
   await add(page, '保存済みのタスク')
   await page.evaluate(async () => {
@@ -234,8 +316,7 @@ test('legacy IndexedDB date sort falls back to manual in both tabs and preserves
     const request = store.get('current')
     request.onsuccess = () => {
       const data = request.result
-      data.settings.sort.今日 = '予定日の昇順'
-      data.settings.sort.今後の予定 = '予定日の昇順'
+      data.settings.sort = { 今日: '予定日の昇順', 今後の予定: '重要なタスクを先頭に表示' }
       store.put(data, 'current')
     }
     await new Promise<void>((resolve, reject) => {
@@ -246,17 +327,14 @@ test('legacy IndexedDB date sort falls back to manual in both tabs and preserves
   })
   await page.reload()
   await expect(card(page, '保存済みのタスク')).toBeVisible()
-  const sort = page.getByLabel('並び替え')
-  await expect(sort.locator('option')).toHaveText(['手動順', '重要なタスクを先頭に表示'])
-  await expect(sort).toHaveValue('手動順')
-  await button(page, '明日以降').tap()
-  await expect(sort.locator('option')).toHaveText(['手動順', '重要なタスクを先頭に表示'])
-  await expect(sort).toHaveValue('手動順')
+  await expect(page.getByLabel('並び替え')).toHaveCount(0)
+  await swipeTo(page, '明日以降')
+  await expect(page.getByLabel('並び替え')).toHaveCount(0)
 })
 
 test('add sheet keeps the date anchor on save and cancel', async ({ page }) => {
   await page.goto('/')
-  await button(page, '明日以降').click()
+  await swipeTo(page, '明日以降')
   const heading = page.locator('.date-heading button').nth(10)
   const dialog = page.getByRole('dialog', { name: 'タスクを追加' })
   await heading.evaluate(element => window.scrollBy(0, element.getBoundingClientRect().top - 250))
@@ -319,7 +397,7 @@ test('add details disclosure preserves focused form fields through a keyboard vi
     Reflect.deleteProperty(viewport, 'height')
     viewport.dispatchEvent(new Event('resize'))
   })
-  await button(page, '明日以降').tap()
+  await swipeTo(page, '明日以降')
   await expect(card(page, '詳細を入力するタスク').getByRole('button', { name: '重要' }))
     .toHaveAttribute('aria-pressed', 'true')
 })
@@ -330,7 +408,7 @@ test('version 1 backup preserves undated tasks, sorting settings, and dates outs
   const outside = offsetDate(futureDates(today).at(-1)!, 1)
   const time = iso()
   const legacy = fresh()
-  legacy.settings.sort['今後の予定'] = '重要なタスクを先頭に表示'
+  Object.assign(legacy.settings, { sort: { 今後の予定: '重要なタスクを先頭に表示' } })
   legacy.groups.push({ id: 'work', name: '仕事', color: '#a18bfa', collapsed: true })
   const base = { completed: false, completedAt: null, deletedAt: null, createdAt: time, updatedAt: time,
     important: true, note: '元のメモ', checklist: [{ id: 'check', title: '元の項目', checked: true }], groupId: 'work', order: 0 }
@@ -354,8 +432,8 @@ test('version 1 backup preserves undated tasks, sorting settings, and dates outs
   await detail.getByRole('button', { name: 'シートを閉じる' }).click()
   await button(page, 'シートを閉じる').click()
   await page.reload()
-  await button(page, '明日以降').click()
-  await expect(page.getByLabel('並び替え')).toHaveValue('重要なタスクを先頭に表示')
+  await swipeTo(page, '明日以降')
+  await expect(page.getByLabel('並び替え')).toHaveCount(0)
   await expect(button(page, '表示期間外')).toHaveCount(0)
   expect(await page.evaluate(async () => {
     return new Promise<string>((resolve, reject) => {
@@ -376,7 +454,7 @@ test('version 1 backup preserves undated tasks, sorting settings, and dates outs
 
 test('touch drag inserts at a line within a date and across dates including empty days', async ({ page, context }) => {
   await page.goto('/')
-  await button(page, '明日以降').click()
+  await swipeTo(page, '明日以降')
   const [first, second, third] = futureDates(localDate()).map(date => page.locator(`[data-date="${date}"]`))
   const dialog = page.getByRole('dialog', { name: 'タスクを追加' })
   for (const [section, name] of [[first, 'ジム'], [first, '複合機'], [third, '買い物']] as const) {
@@ -411,7 +489,7 @@ test('touch drag inserts at a line within a date and across dates including empt
   await drag('ジム', card(page, '買い物'), .2)
   await expect(third.locator('.task-name')).toHaveText(['ジム', '買い物'])
   await page.reload()
-  await button(page, '明日以降').click()
+  await swipeTo(page, '明日以降')
   await expect(third.locator('.task-name')).toHaveText(['ジム', '買い物'])
   await expect(page.locator('.task-name')).toHaveCount(3)
   const source = (await card(page, 'ジム').boundingBox())!
@@ -435,7 +513,7 @@ test('midnight merges carried tasks with today tasks and preserves manual order 
   await page.clock.install({ time: new Date(2026, 10, 20, 23, 58) })
   await page.goto('/')
   await add(page, '洗濯')
-  await button(page, '明日以降').click()
+  await swipeTo(page, '明日以降')
   const heading = page.locator('[data-date="2026-11-21"] h2 button')
   const dialog = page.getByRole('dialog', { name: 'タスクを追加' })
   for (const name of ['ジム', '買い物']) {
@@ -444,7 +522,7 @@ test('midnight merges carried tasks with today tasks and preserves manual order 
     await dialog.getByRole('button', { name: '追加' }).click()
     await expect(dialog).toBeHidden()
   }
-  await button(page, '今日').click()
+  await swipeTo(page, '今日')
   await expect(page.locator('.task-name')).toHaveText(['洗濯'])
   await page.clock.fastForward(121_000)
   await expect(page.locator('.task-name')).toHaveText(['洗濯', 'ジム', '買い物'])
@@ -476,7 +554,7 @@ test('midnight merges carried tasks with today tasks and preserves manual order 
 test('first launch after several days rolls tasks forward without changing importance', async ({ page, context }) => {
   await page.clock.install({ time: new Date(2026, 10, 20, 20) })
   await page.goto('/')
-  await button(page, '明日以降').click()
+  await swipeTo(page, '明日以降')
   await page.locator('[data-date="2026-11-21"] h2 button').click()
   const dialog = page.getByRole('dialog', { name: 'タスクを追加' })
   await dialog.getByLabel('タスク名').fill('翌日初回起動')

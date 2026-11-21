@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { backup, belongs, fresh, futureDates, localDate, maintain, moveTask, moveWithinDate, offsetDate, restore, retention, type Task } from '../src/data/model.ts'
+import { backup, belongs, fresh, futureDates, localDate, maintain, moveTask, moveWithinDate, offsetDate, restore, retention, updateTask, type Task } from '../src/data/model.ts'
 
 const now = new Date(2026, 10, 19, 11)
 const timestamp = now.toISOString()
@@ -105,11 +105,32 @@ test('backup rejects duplicate IDs, invalid dates, invalid version and orphaned 
   }
 })
 
-test('legacy backup translates date sort to manual and keeps task positions', () => {
+test('legacy backup drops the sort preference and keeps task positions', () => {
   const data = { ...fresh(), tasks: [task('a', { order: 7 }), task('b', { order: 2 })] }
   const legacy = { ...data, settings: { ...data.settings,
     sort: { 今日: '予定日の昇順', すべて: '予定日の昇順', 今後の予定: '重要なタスクを先頭に表示' } } }
   const migrated = backup.parse(legacy)
-  assert.deepEqual(migrated.settings.sort, { 今日: '手動順', すべて: '手動順', 今後の予定: '重要なタスクを先頭に表示' })
+  assert.deepEqual(migrated.settings, data.settings)
   assert.deepEqual(migrated.tasks, data.tasks)
+})
+
+test('starring moves only within the Today group or the future date without changing membership', () => {
+  const current = localDate()
+  const future = offsetDate(current, 1)
+  const data = { ...fresh(), tasks: [
+    task('other-group', { date: current, groupId: 'other', order: 0 }),
+    task('group-first', { date: current, groupId: 'work', order: 1 }),
+    task('group-second', { date: current, groupId: 'work', order: 2 }),
+    task('future-first', { date: future, groupId: 'other', order: 3 }),
+    task('future-second', { date: future, groupId: 'work', order: 4 }),
+  ] }
+  const star = (data: ReturnType<typeof fresh>, id: string, important: boolean) =>
+    updateTask(data, id, row => ({ ...row, important }))
+  const ids = (data: ReturnType<typeof fresh>) => [...data.tasks].sort((a, b) => a.order - b.order).map(row => row.id)
+  const todayStar = star(data, 'group-second', true)
+  assert.deepEqual(ids(todayStar), ['other-group', 'group-second', 'group-first', 'future-first', 'future-second'])
+  const futureStar = star(todayStar, 'future-second', true)
+  assert.deepEqual(ids(futureStar), ['other-group', 'group-second', 'group-first', 'future-second', 'future-first'])
+  assert.deepEqual(ids(star(futureStar, 'future-second', false)), ids(futureStar))
+  assert.deepEqual(futureStar.tasks.map(row => row.groupId), data.tasks.map(row => row.groupId))
 })

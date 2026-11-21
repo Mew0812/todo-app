@@ -4,14 +4,6 @@ export const colors = ['#a18bfa', '#739cff', '#52bdee', '#51c7bd', '#62cb8b', '#
   '#e6c45c', '#f5a367', '#f18285', '#f08eb7', '#cf8beb', '#c3a58b'] as const
 export const tabs = ['今日', '明日以降'] as const
 export type Tab = typeof tabs[number]
-// Retain version 1 storage keys so existing settings and backups remain compatible.
-const storedTabs = ['今日', 'すべて', '今後の予定'] as const
-export const sortKey = (tab: Tab) => tab === '今日' ? '今日' : '今後の予定'
-export const sorts = ['手動順', '重要なタスクを先頭に表示'] as const
-const oldDateSort = '予定日の昇順'
-function normalizeSort(sort: typeof sorts[number] | typeof oldDateSort) {
-  return sort === oldDateSort ? '手動順' : sort
-}
 const id = z.string().min(1)
 const timestamp = z.iso.datetime()
 const date = z.iso.date()
@@ -32,7 +24,6 @@ export const backup = z.object({
     color: z.enum(colors), collapsed: z.boolean(),
   })).max(12),
   settings: z.object({
-    sort: z.record(z.enum(storedTabs), z.enum([...sorts, oldDateSort]).transform(normalizeSort)),
     ungroupedCollapsed: z.boolean(),
     createdAt: timestamp, lastBackup: timestamp.nullable(),
   }),
@@ -50,8 +41,7 @@ export const retention = 30 * dayMs
 export const iso = () => new Date().toISOString()
 export const fresh = (): Data => ({
   version: 1, tasks: [], groups: [],
-  settings: { sort: { 今日: '手動順', すべて: '手動順', 今後の予定: '手動順' },
-    ungroupedCollapsed: false, createdAt: iso(), lastBackup: null },
+  settings: { ungroupedCollapsed: false, createdAt: iso(), lastBackup: null },
 })
 export function localDate(date = new Date()) {
   const part = (n: number) => String(n).padStart(2, '0')
@@ -80,13 +70,9 @@ export const formatDate = (value: string | null) => value
   ? new Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric', weekday: 'short' }).format(parseDate(value))
   : '日付未設定'
 export function maintain(data: Data, now = new Date()): Data {
-  // IndexedDB may contain a sort value written by an older version.
-  const sort = data.settings.sort
-  const normalized = {
-    今日: normalizeSort(sort.今日), すべて: normalizeSort(sort.すべて), 今後の予定: normalizeSort(sort.今後の予定),
-  }
-  if (storedTabs.some(tab => normalized[tab] !== sort[tab])) {
-    data = { ...data, settings: { ...data.settings, sort: normalized } }
+  if ('sort' in data.settings) {
+    const { sort: _obsolete, ...settings } = data.settings
+    data = { ...data, settings }
   }
   const today = localDate(now)
   const cutoff = now.getTime() - retention
@@ -133,9 +119,10 @@ export function changeDate(task: Task, date: string): Task {
   return task.date === date ? task : { ...task, date, todayTop: undefined }
 }
 
-export function moveWithinDate(data: Data, id: string, date: string, beforeId?: string): Data {
+export function moveWithinDate(data: Data, id: string, date: string, beforeId?: string, groupId?: string | null): Data {
   const ordered = [...data.tasks].sort((a, b) => a.order - b.order)
   const eligible = (task: Task) => task.date === date && !task.completed && !task.deletedAt
+    && (groupId === undefined || task.groupId === groupId)
   const moved = ordered.find(task => task.id === id && task.date && !task.completed && !task.deletedAt)
   if (!moved) return data
   const sameDay = ordered.filter(task => eligible(task) && task.id !== id)
@@ -147,6 +134,19 @@ export function moveWithinDate(data: Data, id: string, date: string, beforeId?: 
     return [row.id, row.order === order ? row : { ...row, order }]
   }))
   return { ...data, tasks: data.tasks.map(task => positions.get(task.id)!) }
+}
+
+export function updateTask(data: Data, id: string, apply: (task: Task) => Task): Data {
+  const previous = data.tasks.find(task => task.id === id)
+  if (!previous) return data
+  const task = { ...apply(previous), updatedAt: iso() }
+  const next = { ...data, tasks: data.tasks.map(row => row.id === id ? task : row) }
+  if (previous.important || !task.important || !task.date || task.completed || task.deletedAt) return next
+  const date = task.date
+  const group = date > localDate() ? undefined : task.groupId
+  const first = data.tasks.filter(row => row.id !== id && row.date === date && !row.completed && !row.deletedAt
+    && (group === undefined || group === row.groupId)).sort((a, b) => a.order - b.order)[0]
+  return first ? moveWithinDate(next, id, date, first.id, group) : next
 }
 export function restore(task: Task, fromTrash = false): Task {
   return fromTrash ? { ...task, deletedAt: null } : { ...task, completed: false, completedAt: null }

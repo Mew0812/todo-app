@@ -2,25 +2,16 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { DndContext, DragOverlay, pointerWithin, rectIntersection, useDraggable, useDroppable,
   type CollisionDetection, type DragEndEvent } from '@dnd-kit/core'
 import { Check, ChevronDown, ListChecks, Star, Trash2 } from 'lucide-react'
-import { formatDate, futureDates, sortKey, todayPriority, type Data, type Tab, type Task } from '../data/model'
+import { formatDate, futureDates, todayPriority, type Data, type Tab, type Task } from '../data/model'
 import { useLongPressSensors } from '../components/SortableRows'
 
 type Destination = {
   groupId: string | null; date?: string; index: number;
-  tasks: Task[]; collapsed: boolean; importantFirst?: boolean
+  tasks: Task[]; collapsed: boolean
 }
 const collision: CollisionDetection = args => {
-  const active = args.active.data.current
-  const task = active?.task as Task | undefined
-  const valid = args.droppableContainers.filter(container => {
-    const target = container.data.current as Destination | undefined
-    if (!target || Boolean(target.date) !== Boolean(active?.date)) return false
-    if (!target.importantFirst || !task) return true
-    // In importance order, the displayed insertion line must match the position after sorting.
-    const before = target.tasks[target.index - 1]
-    const after = target.tasks[target.index]
-    return task.important ? before?.important !== false : after?.important !== true
-  })
+  const valid = args.droppableContainers.filter(container => Boolean(container.data.current?.date)
+    === Boolean(args.active.data.current?.date))
   const options = { ...args, droppableContainers: valid }
   return args.pointerCoordinates ? pointerWithin(options) : rectIntersection(options)
 }
@@ -84,18 +75,17 @@ function DropZone({ id, destination, children, className }:
   </div>
 }
 
-export function Todo({ data, tab, today, visible, completed, onAddDate, toggle, move, actions,
+export function Todo({ data, tab, today, visible, completed, onAddDate, toggle, move, actions, onDragState,
   restore, animations, completedOpen, onCompletedToggle }:
   { data: Data; tab: Tab; today: string; visible: Task[]; completed: Task[];
     toggle: (group: string) => void
     onAddDate: (date: string, anchor: HTMLElement) => void; move: (task: Task, group: string | null, before?: string, date?: string) => void; actions: Actions
     restore: (task: Task) => void; animations: Record<string, string>; completedOpen: boolean
-    onCompletedToggle: (open: boolean) => void }) {
+    onCompletedToggle: (open: boolean) => void; onDragState: (active: boolean) => void }) {
   const [dragging, setDragging] = useState<Task | null>(null)
   const [destination, setDestination] = useState<Destination | null>(null)
   const [expanded, setExpanded] = useState<string | null | undefined>()
   const sensors = useLongPressSensors()
-  const sort = data.settings.sort[sortKey(tab)]
   const groups = data.groups
   const future = tab === '明日以降'
 
@@ -105,7 +95,7 @@ export function Todo({ data, tab, today, visible, completed, onAddDate, toggle, 
     return () => window.clearTimeout(timer)
   }, [dragging, destination])
 
-  function reset() { setDragging(null); setDestination(null); setExpanded(undefined) }
+  function reset() { onDragState(false); setDragging(null); setDestination(null); setExpanded(undefined) }
   function finish({ active, over }: DragEndEvent) {
     reset()
     if (!over) return
@@ -119,22 +109,16 @@ export function Todo({ data, tab, today, visible, completed, onAddDate, toggle, 
       if (target.date !== task.date || former !== index) move(task, task.groupId, remaining[index]?.id, target.date)
       return
     }
-    if (task.groupId === target.groupId && (sort !== '手動順' || former === index)) return
+    if (task.groupId === target.groupId && former === index) return
     if (target.groupId !== null && (target.collapsed || (expanded === target.groupId
       && groups.find(group => group.id === target.groupId)?.collapsed))) {
       toggle(target.groupId)
     }
-    move(task, target.groupId, sort === '手動順' ? remaining[index]?.id : undefined)
+    move(task, target.groupId, remaining[index]?.id)
   }
 
   function sortTasks(tasks: Task[]) {
-    return tasks.sort((a, b) => {
-      if (sort === '重要なタスクを先頭に表示') {
-        const priority = future ? 0 : todayPriority(b, today) - todayPriority(a, today)
-        return priority || Number(b.important) - Number(a.important) || a.order - b.order
-      }
-      return a.order - b.order
-    })
+    return tasks.sort((a, b) => a.order - b.order)
   }
 
   function taskList(target: Destination) {
@@ -183,6 +167,7 @@ export function Todo({ data, tab, today, visible, completed, onAddDate, toggle, 
     <DndContext sensors={sensors} collisionDetection={collision} onDragEnd={finish} onDragCancel={reset}
       autoScroll={{ threshold: { x: 0, y: 0.16 }, acceleration: 14 }}
       onDragStart={({ active }) => {
+        onDragState(true)
         setDragging(active.data.current?.task)
       }}
       onDragOver={({ over }) => {
@@ -190,8 +175,7 @@ export function Todo({ data, tab, today, visible, completed, onAddDate, toggle, 
       }}>
       {future ? futureDates(today).map(date => {
         const tasks = sortTasks(visible.filter(task => task.date === date))
-        const target = { date, groupId: null, tasks, index: 0, collapsed: false,
-          importantFirst: sort === '重要なタスクを先頭に表示' }
+        const target = { date, groupId: null, tasks, index: 0, collapsed: false }
         return <section className="date-section" key={date} data-date={date}>
           <DropZone id={'date:' + date} destination={target} className="date-target">
             <h2 className="date-heading"><button onClick={event => {

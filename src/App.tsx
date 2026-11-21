@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDownUp, CalendarDays, Check, ClipboardList, Plus, Settings2 } from 'lucide-react'
+import { Check, Plus, Settings2 } from 'lucide-react'
 import { useAddScroll } from './components/useAddScroll'
-import { addTask, belongs, changeDate, formatDate, iso, localDate, moveTask, moveWithinDate, sortKey, sorts, restore as restoreTask, retention, colors,
+import { useScreenSwipe } from './components/useScreenSwipe'
+import { addTask, belongs, changeDate, formatDate, iso, localDate, moveTask, moveWithinDate, updateTask, restore as restoreTask, retention, colors,
   type Data, type Tab, type Task } from './data/model'
 import { readBackup, update, type Change } from './data/storage'
 import { Settings } from './screens/Settings'
@@ -27,6 +28,11 @@ export default function App() {
   const [backupDismissed, setBackupDismissed] = useState(false)
   const [animations, setAnimations] = useState<Record<string, string>>({})
   const [leaving, setLeaving] = useState<Record<string, Leaving>>({})
+  const switched = useRef(false)
+  const swipe = useScreenSwipe(tab, Boolean(settings || adding || detail), next => {
+    switched.current = true
+    setTab(next)
+  })
   const undoTimer = useRef<number>(undefined)
   const refreshRef = useRef<() => void>(() => {})
 
@@ -79,30 +85,8 @@ export default function App() {
   }
   const todaysCompleted = completed.filter(task => !leaving[task.id] && localDate(new Date(task.completedAt!)) === today)
   const remind = !backupDismissed && Date.now() - Date.parse(data.settings.lastBackup ?? data.settings.createdAt) >= retention
-  const sort = view.settings.sort[sortKey(tab)]
-
-  function changeSort(next: typeof sorts[number]) {
-    void save(current => {
-      const key = sortKey(tab)
-      if (current.settings.sort[key] === next) return current
-      return {
-        ...current,
-        settings: { ...current.settings, sort: { ...current.settings.sort, [key]: next } },
-        tasks: tab === '今日' ? current.tasks.map(task => task.todayTop
-          ? { ...task, todayTop: undefined } : task) : current.tasks,
-      }
-    })
-  }
-
-  function switchTab(next: Tab) {
-    if (tab === next) return
-    setTab(next)
-    window.scrollTo(0, 0)
-  }
-
   function patch(id: string, apply: (task: Task) => Task) {
-    return save(current => ({ ...current, tasks: current.tasks.map(task => task.id !== id ? task
-      : { ...apply(task), updatedAt: iso() }) }))
+    return save(current => updateTask(current, id, apply))
   }
   function animate(id: string, name: 'entering' | 'leaving') {
     setAnimations(current => ({ ...current, [id]: name }))
@@ -201,34 +185,26 @@ export default function App() {
       <div className="brand"><span className="brand-mark"><Check size={17} strokeWidth={3} /></span><span>MyTodo</span></div>
       <button className="icon-button settings-button" aria-label="設定" onClick={() => setSettings(true)}><Settings2 size={20} /></button>
     </header>
-    <main className={tab === '明日以降' ? 'main main-future' : 'main'}>
-      <div className="page-title"><h1>ToDo</h1><span>{formatDate(today)}</span>
-        <label className="sort-control" title={sort}><ArrowDownUp size={18} />
-          <select aria-label="並び替え" value={sort} onChange={event => changeSort(event.target.value as typeof sorts[number])}>
-            {sorts.map(value => <option key={value}>{value}</option>)}
-          </select>
-        </label>
-      </div>
+    <main {...swipe.handlers} className={tab === '明日以降' ? 'main main-future' : 'main'}>
+      <div className="page-title"><h1>{tab}</h1><span>{formatDate(today)}</span></div>
       {remind && <div className="backup-reminder"><button onClick={() => setSettings(true)}>JSONバックアップを保存する</button>
         <button className="icon-button" aria-label="案内を閉じる" onClick={() => setBackupDismissed(true)}>×</button></div>}
-      <Todo data={view} tab={tab} today={today} visible={visible}
-        completed={todaysCompleted} completedOpen={completedOpen} onCompletedToggle={setCompletedOpen}
-        toggle={toggle} restore={restore} animations={animations}
-        onAddDate={(date, anchor) => { addScroll.capture(anchor); setAdding({ date }) }}
-        move={async (task, group, before, date) => {
-          const saved = await save(current => date
-            ? (date > localDate() ? moveWithinDate(current, task.id, date, before) : current)
-            : moveTask(current, task.id, group, before))
-          if (saved) animate(task.id, 'entering')
-        }}
-        actions={actions} />
+      <div key={tab} className={switched.current ? (tab === '今日' ? 'today-content' : 'future-content') : undefined}>
+        <Todo onDragState={swipe.onDragState} data={view} tab={tab} today={today} visible={visible}
+          completed={todaysCompleted} completedOpen={completedOpen} onCompletedToggle={setCompletedOpen}
+          toggle={toggle} restore={restore} animations={animations}
+          onAddDate={(date, anchor) => { addScroll.capture(anchor); setAdding({ date }) }}
+          move={async (task, group, before, date) => {
+            const saved = await save(current => date
+              ? (date > localDate() ? moveWithinDate(current, task.id, date, before) : current)
+              : moveTask(current, task.id, group, before))
+            if (saved) animate(task.id, 'entering')
+          }}
+          actions={actions} />
+      </div>
     </main>
     {tab === '今日' && <button className="fab" aria-label="タスクを追加"
       onClick={() => { addScroll.capture(); setAdding({}) }}><Plus size={27} /></button>}
-    <nav className="bottom-nav" aria-label="メインナビゲーション">
-      <button aria-current={tab === '今日' ? 'page' : undefined} onClick={() => switchTab('今日')}><ClipboardList size={21} />今日</button>
-      <button aria-current={tab === '明日以降' ? 'page' : undefined} onClick={() => switchTab('明日以降')}><CalendarDays size={21} />明日以降</button>
-    </nav>
     {settings && <Settings data={view} onClose={() => setSettings(false)} completed={completed} trash={trash}
       undated={active.filter(task => task.date === null)} taskActions={actions}
       onGroup={editGroup} openTask={openTask} restore={restore}

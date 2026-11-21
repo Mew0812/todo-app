@@ -42,7 +42,8 @@ export function useAddScroll(open: boolean) {
       let offset = anchor.top - saved.top
       if (saved.addedId) {
         const card = document.getElementById('task-card-' + saved.addedId)?.getBoundingClientRect()
-        const bottom = document.querySelector('.bottom-nav')?.getBoundingClientRect().top ?? window.innerHeight
+        const safeBottom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-bottom')) || 0
+        const bottom = window.innerHeight - safeBottom
         if (card && card.bottom - offset > bottom && card.bottom - anchor.top < bottom) {
           offset = card.bottom - bottom
         }
