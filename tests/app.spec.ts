@@ -10,9 +10,13 @@ async function swipeTo(page: Page, tab: '今日' | '明日以降') {
     const right = to === '今日'
     for (const [type, x] of [['touchstart', right ? 70 : 300], ['touchmove', right ? 190 : 180],
       ['touchend', right ? 300 : 70]] as const) {
-      const point = new Touch({ target, identifier: 1, clientX: x, clientY: 180 })
-      target.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true,
-        touches: type === 'touchend' ? [] : [point], changedTouches: [point] }))
+      const point = { identifier: 1, clientX: x, clientY: 180 }
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperties(event, {
+        touches: { value: type === 'touchend' ? [] : [point] },
+        changedTouches: { value: [point] },
+      })
+      target.dispatchEvent(event)
     }
   }, tab)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(tab)
