@@ -7,8 +7,8 @@ const iconSizes = [1024, 512, 192]
 const defaultColor = '#15171e'
 const segmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('ja', { granularity: 'grapheme' }) : null
 
-function twoCharacters(value: string) {
-  return (segmenter ? Array.from(segmenter.segment(value), item => item.segment) : Array.from(value)).slice(0, 2).join('')
+function limitIconText(value: string) {
+  return (segmenter ? Array.from(segmenter.segment(value), item => item.segment) : Array.from(value)).slice(0, 5).join('')
 }
 
 export function AppIcon({ onBack }: { onBack: () => void }) {
@@ -25,7 +25,7 @@ export function AppIcon({ onBack }: { onBack: () => void }) {
   const [size, setSize] = useState(1024)
   const [message, setMessage] = useState('')
   const canvas = useRef<HTMLCanvasElement>(null)
-  const text = mode === '数字' ? digits : twoCharacters(letters.trim())
+  const text = mode === '数字' ? digits : limitIconText(letters.trim())
   const ready = mode === '写真・画像' ? Boolean(photo) : Boolean(mode && text)
   const canShare = typeof navigator.share === 'function' && typeof navigator.canShare === 'function'
 
@@ -116,10 +116,10 @@ export function AppIcon({ onBack }: { onBack: () => void }) {
       {mode && (mode !== '写真・画像' || photo)
         ? <canvas className="icon-preview" ref={canvas} width={1024} height={1024} role="img" aria-label="作成したアイコンのプレビュー" />
         : <img className="icon-preview" src={import.meta.env.BASE_URL + 'icon-192.png'} alt="現在のMyTodoアイコン" />}
-      {mode === '文字' && <label>文字（1〜2文字）
+      {mode === '文字' && <label>文字（1〜5文字）
         <input value={letters} onChange={event => setLetters(
-          (event.nativeEvent as InputEvent).isComposing ? event.target.value : twoCharacters(event.target.value))}
-          onCompositionEnd={event => setLetters(twoCharacters(event.currentTarget.value))} />
+          (event.nativeEvent as InputEvent).isComposing ? event.target.value : limitIconText(event.target.value))}
+          onCompositionEnd={event => setLetters(limitIconText(event.currentTarget.value))} />
       </label>}
       {mode === '数字' && <label>数字（1〜2桁）
         <input value={digits} inputMode="numeric"

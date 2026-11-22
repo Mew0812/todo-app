@@ -13,8 +13,8 @@ test('creates opaque PNGs from text, digits and a local photo, without changing 
   expect([manifest.display, manifest.start_url, manifest.scope]).toEqual(['standalone', './', './'])
 
   await editor.getByRole('button', { name: '文字', exact: true }).click()
-  await editor.getByLabel('文字（1〜2文字）').fill('仕事★')
-  await expect(editor.getByLabel('文字（1〜2文字）')).toHaveValue('仕事')
+  await editor.getByLabel('文字（1〜5文字）').fill('仕事A★👩‍💻過')
+  await expect(editor.getByLabel('文字（1〜5文字）')).toHaveValue('仕事A★👩‍💻')
   await editor.getByLabel('背景色').fill('#103060')
   const canvas = editor.locator('canvas')
   const pixel = (x: number, y: number) => canvas.evaluate((element: HTMLCanvasElement, [x, y]) =>
