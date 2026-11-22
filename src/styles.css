@@ -164,5 +164,12 @@ input[type="checkbox"] { accent-color: var(--accent); width: 21px; height: 21px;
 
 .today-content { animation: enter-from-left 200ms ease-out; }
 .future-content { animation: enter-from-right 200ms ease-out; }
+.icon-settings-link { display: flex; align-items: center; justify-content: space-between; }
+.icon-editor { grid-template-columns: minmax(0, 1fr); }
+.icon-editor-back { justify-self: start; }
+.icon-editor-modes, .icon-editor-colors { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+.icon-editor-modes button[aria-pressed="true"] { box-shadow: inset 0 0 0 2px currentColor; }
+.icon-preview { display: block; justify-self: center; width: min(180px, 100%); height: auto; aspect-ratio: 1; border-radius: 23%; }
+.icon-editor input[type="file"], .icon-editor input[type="range"] { max-width: 100%; min-width: 0; }
 @keyframes enter-from-left { from { transform: translateX(-24px); opacity: 0; } }
 @keyframes enter-from-right { from { transform: translateX(24px); opacity: 0; } }

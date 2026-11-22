@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
@@ -6,14 +7,18 @@ export default defineConfig({
   plugins: [{
     name: 'offline-shell',
     generateBundle(_, bundle) {
-      const files = ['./index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png',
+      const publicFiles = ['manifest.webmanifest', 'icon-192.png', 'icon-512.png']
+      const files = ['./index.html', ...publicFiles.map(file => './' + file),
         ...Object.keys(bundle).map(file => './' + file)]
-      const version = createHash('sha256').update(JSON.stringify(files)).digest('hex').slice(0, 16)
+      const hash = createHash('sha256').update(JSON.stringify(files))
+      for (const file of publicFiles) hash.update(readFileSync(new URL('./public/' + file, import.meta.url)))
+      const version = hash.digest('hex').slice(0, 16)
       this.emitFile({ type: 'asset', fileName: 'sw.js', source: `
 const prefix = 'mytodo-' + self.registration.scope + '-'
 const cacheName = prefix + '${version}'
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(${JSON.stringify(files)})))
+  event.waitUntil(caches.open(cacheName).then(cache =>
+    cache.addAll(${JSON.stringify(files)}.map(file => new Request(file, { cache: 'reload' })))))
 })
 self.addEventListener('activate', event => {
   event.waitUntil(caches.keys().then(keys => Promise.all(keys

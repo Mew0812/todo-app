@@ -1,9 +1,10 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { Download, Ellipsis, Plus, Upload } from 'lucide-react'
+import { ChevronRight, Download, Ellipsis, Plus, Upload } from 'lucide-react'
 import { Sheet } from '../components/Sheet'
 import { SortableRows } from '../components/SortableRows'
 import { colors, formatDate, localDate, type Data, type Task } from '../data/model'
 import { Card, HistoryRows, type Actions } from './Todo'
+import { AppIcon } from './AppIcon'
 
 type Group = Data['groups'][number]
 type Props = {
@@ -54,8 +55,13 @@ export function Settings(props: Props) {
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState('')
   const input = useRef<HTMLInputElement>(null)
+  const [editingIcon, setEditingIcon] = useState(false)
+  if (editingIcon) return <AppIcon key="app-icon" onBack={() => setEditingIcon(false)} />
   return <Sheet title="設定" onClose={props.onClose}>
     <div className="settings-sections">
+      <button className="soft icon-settings-link" onClick={() => setEditingIcon(true)}>
+        アプリアイコン <ChevronRight size={18} />
+      </button>
       <section>
         <div className="section-heading"><h3>グループ</h3>
           <button className="icon-button" aria-label="グループを追加" disabled={data.groups.length >= 12}
