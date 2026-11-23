@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, Plus, Settings2 } from 'lucide-react'
 import { useAddScroll } from './components/useAddScroll'
 import { useScreenSwipe } from './components/useScreenSwipe'
-import { addTask, belongs, changeDate, formatDate, iso, localDate, moveTask, moveWithinDate, updateTask, restore as restoreTask, retention, colors,
+import { addTask, belongs, changeDate, formatDate, iso, localDate, moveTask, moveWithinDate, moveTomorrowToToday, offsetDate, preserveTomorrowMoves, updateTask, restore as restoreTask, retention, colors,
   type Data, type Tab, type Task } from './data/model'
 import { readBackup, update, type Change } from './data/storage'
 import { Settings } from './screens/Settings'
@@ -169,7 +169,7 @@ export default function App() {
     try {
       const imported = readBackup(await file.text())
       if (!confirm('現在のタスク・グループ・設定をすべてバックアップの内容で置き換えますか？')) return
-      if (await save(() => imported)) {
+      if (await save(current => preserveTomorrowMoves(current, imported))) {
         resetAfterRestore()
         setMessage('バックアップを復元しました')
       }
@@ -205,6 +205,12 @@ export default function App() {
           completed={todaysCompleted} completedOpen={completedOpen} onCompletedToggle={setCompletedOpen}
           toggle={toggle} restore={restore} animations={animations}
           onAddDate={(date, anchor) => { addScroll.capture(anchor); setAdding({ date }) }}
+          onMoveTomorrow={date => {
+            const clickedAt = new Date()
+            const clickedDay = localDate(clickedAt)
+            if (offsetDate(clickedDay, 1) !== date) { void save(); return }
+            void save(current => localDate() === clickedDay ? moveTomorrowToToday(current, clickedAt) : current)
+          }}
           move={async (task, group, before, date) => {
             const saved = await save(current => date
               ? (date > localDate() ? moveWithinDate(current, task.id, date, before) : current)

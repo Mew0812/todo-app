@@ -1,9 +1,33 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { backup, belongs, fresh, futureDates, localDate, maintain, moveTask, moveWithinDate, offsetDate, restore, retention, updateTask, type Task } from '../src/data/model.ts'
+import { backup, belongs, fresh, futureDates, localDate, maintain, moveTask, moveWithinDate, moveTomorrowToToday, offsetDate, preserveTomorrowMoves, restore, retention, updateTask, type Task } from '../src/data/model.ts'
 
 const now = new Date(2026, 10, 19, 11)
 const timestamp = now.toISOString()
+
+test('manual tomorrow move preserves fields, excludes completed and trashed tasks, and keeps history after restore', () => {
+  const current = localDate(now)
+  const tomorrow = offsetDate(current, 1)
+  const later = offsetDate(current, 2)
+  const data = fresh()
+  data.groups.push({ id: 'g', name: '仕事', color: '#a18bfa', collapsed: false })
+  data.tasks = [
+    task('target', { date: tomorrow, groupId: 'g', important: true, order: 6, note: 'メモ',
+      checklist: [{ id: 'check', title: '確認', checked: true }] }),
+    task('today', { date: current }), task('later', { date: later }),
+    task('done', { date: tomorrow, completed: true, completedAt: timestamp }),
+    task('trash', { date: tomorrow, deletedAt: timestamp }),
+  ]
+  const moved = moveTomorrowToToday(data, now)
+  assert.deepEqual(moved.tasks[0], { ...data.tasks[0], date: current, updatedAt: timestamp })
+  assert.deepEqual(moved.tasks.slice(1), data.tasks.slice(1))
+  assert.deepEqual(backup.parse(JSON.parse(JSON.stringify(moved))).settings.tomorrowMoves, [current])
+  const restored = preserveTomorrowMoves(moved, data)
+  assert.equal(moveTomorrowToToday(restored, now), restored)
+  const next = maintain(moved, new Date(2026, 10, 20))
+  assert.equal(next.tasks[0].date, tomorrow)
+  assert.equal(next.tasks[2].date, later)
+})
 const today = localDate(now)
 const yesterday = offsetDate(today, -1)
 const tomorrow = offsetDate(today, 1)

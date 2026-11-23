@@ -1,4 +1,4 @@
-import { backup, fresh, maintain, type Data } from './model.ts'
+import { backup, fresh, maintain, preserveTomorrowMoves, type Data } from './model.ts'
 
 let connection: Promise<IDBDatabase> | undefined
 function open() {
@@ -66,7 +66,7 @@ export async function writeLocalValue(key: string, value: unknown): Promise<void
 }
 
 export async function restoreCloud(value: Data, key: string, meta: unknown, allowed: () => boolean): Promise<Data> {
-  const next = backup.parse(value)
+  let next = backup.parse(value)
   const database = await open()
   return new Promise((resolve, reject) => {
     const tx = database.transaction('data', 'readwrite')
@@ -77,6 +77,7 @@ export async function restoreCloud(value: Data, key: string, meta: unknown, allo
       try {
         if (!allowed()) throw new Error('ログイン状態が変わりました。')
         if (request.result === undefined) throw new Error('端末の現在のデータを確認できません。')
+        next = preserveTomorrowMoves(request.result, next)
         store.put(request.result, key + ':before-restore')
         store.put(next, 'current')
         store.put(meta, key)

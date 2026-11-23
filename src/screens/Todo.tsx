@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { DndContext, DragOverlay, pointerWithin, rectIntersection, useDraggable, useDroppable,
   type CollisionDetection, type DragEndEvent } from '@dnd-kit/core'
 import { Check, ChevronDown, ListChecks, Star, Trash2 } from 'lucide-react'
-import { formatDate, futureDates, todayPriority, type Data, type Tab, type Task } from '../data/model'
+import { formatDate, futureDates, offsetDate, todayPriority, type Data, type Tab, type Task } from '../data/model'
 import { useLongPressSensors } from '../components/SortableRows'
 
 type Destination = {
@@ -75,11 +75,12 @@ function DropZone({ id, destination, children, className }:
   </div>
 }
 
-export function Todo({ data, tab, today, visible, completed, onAddDate, toggle, move, actions, onDragState,
+export function Todo({ data, tab, today, visible, completed, onAddDate, onMoveTomorrow, toggle, move, actions, onDragState,
   restore, animations, completedOpen, onCompletedToggle }:
   { data: Data; tab: Tab; today: string; visible: Task[]; completed: Task[];
     toggle: (group: string) => void
     onAddDate: (date: string, anchor: HTMLElement) => void; move: (task: Task, group: string | null, before?: string, date?: string) => void; actions: Actions
+    onMoveTomorrow: (date: string) => void
     restore: (task: Task) => void; animations: Record<string, string>; completedOpen: boolean
     onCompletedToggle: (open: boolean) => void; onDragState: (active: boolean) => void }) {
   const [dragging, setDragging] = useState<Task | null>(null)
@@ -177,10 +178,15 @@ export function Todo({ data, tab, today, visible, completed, onAddDate, toggle, 
         const tasks = sortTasks(visible.filter(task => task.date === date))
         const target = { date, groupId: null, tasks, index: 0, collapsed: false }
         return <section className="date-section" key={date} data-date={date}>
-          <DropZone id={'date:' + date} destination={target} className="date-target">
+          <DropZone id={'date:' + date} destination={target} className="date-target date-header">
             <h2 className="date-heading"><button onClick={event => {
               if (!dragging) onAddDate(date, event.currentTarget)
             }}>{formatDate(date)}</button></h2>
+            {date === offsetDate(today, 1) && <button type="button" className="soft move-tomorrow"
+              disabled={dragging !== null || !tasks.length || data.settings.tomorrowMoves?.includes(today)}
+              onClick={() => onMoveTomorrow(date)}>
+              {data.settings.tomorrowMoves?.includes(today) ? '移動済み' : '今日へ移動'}
+            </button>}
           </DropZone>
           {tasks.length > 0 && taskList(target)}
         </section>

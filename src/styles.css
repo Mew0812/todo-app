@@ -47,6 +47,9 @@ svg { flex-shrink: 0; }
 .fab { z-index: 4; position: fixed; bottom: calc(var(--safe-bottom) + 15px); right: max(18px, calc((100% - var(--content)) / 2 + 18px), env(safe-area-inset-right)); width: 57px; height: 57px; border-radius: 18px; display: grid; place-items: center; background: var(--accent); color: #21173b; box-shadow: 0 6px 20px #0008; }
 .date-heading { font-size: 14px; color: var(--accent); margin: 0 0 4px; }
 .date-heading button { width: 100%; min-height: 44px; text-align: left; font-weight: inherit; }
+.date-header { display: flex; align-items: center; gap: 8px; }
+.date-header .date-heading { flex: 1; min-width: 0; }
+.move-tomorrow { flex-shrink: 0; font-size: 13px; }
 .task-group { margin-bottom: 12px; }
 .group-heading button { width: 100%; display: flex; text-align: left; align-items: center; gap: 9px; min-height: 44px; font-weight: 700; font-size: 14px; }
 .group-heading i { width: 3px; height: 17px; border-radius: 3px; }

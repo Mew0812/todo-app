@@ -26,6 +26,7 @@ export const backup = z.object({
   settings: z.object({
     ungroupedCollapsed: z.boolean(),
     createdAt: timestamp, lastBackup: timestamp.nullable(),
+    tomorrowMoves: z.array(date).optional(),
   }),
 }).refine(data => unique(data.tasks.map(t => t.id))
   && unique(data.groups.map(g => g.id)) && unique(data.groups.map(g => g.name))
@@ -94,6 +95,27 @@ export function maintain(data: Data, now = new Date()): Data {
 export function belongs(task: Task, tab: Tab, today: string) {
   if (task.completed || task.deletedAt || !task.date) return false
   return tab === '今日' ? task.date === today : task.date > today && task.date <= futureRange(today).end
+}
+
+export function moveTomorrowToToday(data: Data, now = new Date()): Data {
+  const today = localDate(now)
+  const history = data.settings.tomorrowMoves ?? []
+  if (history.includes(today)) return data
+  const tomorrow = offsetDate(today, 1)
+  let moved = false
+  const tasks = data.tasks.map(task => {
+    if (task.date !== tomorrow || task.completed || task.deletedAt) return task
+    moved = true
+    return { ...task, date: today, updatedAt: now.toISOString() }
+  })
+  return moved ? { ...data, tasks, settings: { ...data.settings, tomorrowMoves: [...history, today] } } : data
+}
+
+export function preserveTomorrowMoves(current: Data, restored: Data): Data {
+  const tomorrowMoves = [...new Set([
+    ...(restored.settings.tomorrowMoves ?? []), ...(current.settings.tomorrowMoves ?? []),
+  ])]
+  return tomorrowMoves.length ? { ...restored, settings: { ...restored.settings, tomorrowMoves } } : restored
 }
 
 export function todayPriority(task: Task, today: string) {
