@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 export const colors = ['#a18bfa', '#739cff', '#52bdee', '#51c7bd', '#62cb8b', '#a5c962',
   '#e6c45c', '#f5a367', '#f18285', '#f08eb7', '#cf8beb', '#c3a58b'] as const
-export const tabs = ['今日', '明日以降'] as const
+export const tabs = ['今日', '明日以降', '将来'] as const
 export type Tab = typeof tabs[number]
 const id = z.string().min(1)
 const timestamp = z.iso.datetime()
@@ -15,6 +15,7 @@ const task = z.object({
   completedAt: timestamp.nullable(), order: z.number().int().nonnegative(), deletedAt: timestamp.nullable(),
   scheduledOn: date.optional(), promotedOn: date.optional(),
   todayTop: z.number().int().nonnegative().optional(),
+  someday: z.literal(true).optional(),
 }).refine(t => t.completed === Boolean(t.completedAt) && unique(t.checklist.map(i => i.id)))
 export const backup = z.object({
   version: z.literal(1),
@@ -84,7 +85,7 @@ export function maintain(data: Data, now = new Date()): Data {
       changed = true
       return []
     }
-    if (!task.completed && !task.deletedAt && task.date && task.date < today) {
+    if (!task.someday && !task.completed && !task.deletedAt && task.date && task.date < today) {
       changed = true
       return [{ ...task, date: today, updatedAt: now.toISOString() }]
     }
@@ -93,7 +94,9 @@ export function maintain(data: Data, now = new Date()): Data {
   return changed ? { ...data, tasks } : data
 }
 export function belongs(task: Task, tab: Tab, today: string) {
-  if (task.completed || task.deletedAt || !task.date) return false
+  if (task.completed || task.deletedAt) return false
+  if (tab === '将来') return task.someday === true
+  if (task.someday || !task.date) return false
   return tab === '今日' ? task.date === today : task.date > today && task.date <= futureRange(today).end
 }
 
@@ -104,7 +107,7 @@ export function moveTomorrowToToday(data: Data, now = new Date()): Data {
   const tomorrow = offsetDate(today, 1)
   let moved = false
   const tasks = data.tasks.map(task => {
-    if (task.date !== tomorrow || task.completed || task.deletedAt) return task
+    if (task.someday || task.date !== tomorrow || task.completed || task.deletedAt) return task
     moved = true
     return { ...task, date: today, updatedAt: now.toISOString() }
   })
@@ -124,12 +127,13 @@ export function todayPriority(task: Task, today: string) {
 
 export function addTask(data: Data, task: Task, atTop: boolean): Data {
   const groupId = data.groups.some(group => group.id === task.groupId) ? task.groupId : null
+  if (task.someday) return prependSomeday(data, { ...task, groupId })
   const order = data.tasks.reduce((next, row) => Math.max(next, row.order + 1), 0)
   if (!atTop) return { ...data, tasks: [...data.tasks, { ...task, groupId, order }] }
 
   const todayTop = data.tasks.reduce((next, row) => Math.max(next, (row.todayTop ?? 0) + 1), 1)
   // Make room in the date/group's manual order while retaining existing relative positions.
-  const tasks = data.tasks.map(row => row.groupId === groupId && row.date === task.date
+  const tasks = data.tasks.map(row => !row.someday && row.groupId === groupId && row.date === task.date
     ? { ...row, order: row.order + 1 } : row)
   return {
     ...data, tasks: [...tasks, { ...task, groupId, order: 0, todayTop }],
@@ -137,15 +141,36 @@ export function addTask(data: Data, task: Task, atTop: boolean): Data {
   }
 }
 
+function prependSomeday(data: Data, task: Task): Data {
+  const first = { ...task, someday: true as const, date: null, important: false, todayTop: undefined, order: 0 }
+  const tasks = data.tasks.map(row => row.id === task.id ? first : row.someday ? { ...row, order: row.order + 1 } : row)
+  return { ...data, tasks: tasks.some(row => row.id === task.id) ? tasks : [...tasks, first] }
+}
+
+export function moveSomeday(data: Data, id: string, beforeId?: string): Data {
+  const active = data.tasks.filter(row => row.someday && !row.completed && !row.deletedAt)
+    .sort((a, b) => a.order - b.order)
+  const task = active.find(row => row.id === id)
+  if (!task || beforeId === id) return data
+  const ordered = active.filter(row => row.id !== id)
+  const index = ordered.findIndex(row => row.id === beforeId)
+  ordered.splice(index < 0 ? ordered.length : index, 0, task)
+  const positions = new Map(ordered.map((row, order) => [row.id, order]))
+  return { ...data, tasks: data.tasks.map(row => {
+    const order = positions.get(row.id)
+    return order === undefined || order === row.order ? row : { ...row, order }
+  }) }
+}
+
 export function changeDate(task: Task, date: string): Task {
-  return task.date === date ? task : { ...task, date, todayTop: undefined }
+  return !task.someday && task.date === date ? task : { ...task, date, someday: undefined, todayTop: undefined }
 }
 
 export function moveWithinDate(data: Data, id: string, date: string, beforeId?: string, groupId?: string | null): Data {
   const ordered = [...data.tasks].sort((a, b) => a.order - b.order)
-  const eligible = (task: Task) => task.date === date && !task.completed && !task.deletedAt
+  const eligible = (task: Task) => !task.someday && task.date === date && !task.completed && !task.deletedAt
     && (groupId === undefined || task.groupId === groupId)
-  const moved = ordered.find(task => task.id === id && task.date && !task.completed && !task.deletedAt)
+  const moved = ordered.find(task => task.id === id && !task.someday && task.date && !task.completed && !task.deletedAt)
   if (!moved) return data
   const sameDay = ordered.filter(task => eligible(task) && task.id !== id)
   const destination = sameDay.findIndex(task => task.id === beforeId)
@@ -162,11 +187,13 @@ export function updateTask(data: Data, id: string, apply: (task: Task) => Task):
   const previous = data.tasks.find(task => task.id === id)
   if (!previous) return data
   const task = { ...apply(previous), updatedAt: iso() }
+  if (!previous.someday && task.someday) return prependSomeday(data, task)
+  if (previous.someday && !task.someday) task.order = data.tasks.reduce((max, row) => Math.max(max, row.order + 1), 0)
   const next = { ...data, tasks: data.tasks.map(row => row.id === id ? task : row) }
   if (previous.important || !task.important || !task.date || task.completed || task.deletedAt) return next
   const date = task.date
   const group = date > localDate() ? undefined : task.groupId
-  const first = data.tasks.filter(row => row.id !== id && row.date === date && !row.completed && !row.deletedAt
+  const first = data.tasks.filter(row => !row.someday && row.id !== id && row.date === date && !row.completed && !row.deletedAt
     && (group === undefined || group === row.groupId)).sort((a, b) => a.order - b.order)[0]
   return first ? moveWithinDate(next, id, date, first.id, group) : next
 }
@@ -175,8 +202,8 @@ export function restore(task: Task, fromTrash = false): Task {
 }
 export function moveTask(data: Data, id: string, groupId: string | null, beforeId?: string, date?: string): Data {
   const task = data.tasks.find(t => t.id === id)
-  if (!task || (groupId !== null && !data.groups.some(g => g.id === groupId))) return data
-  const ordered = data.tasks.filter(t => t.id !== id && t.groupId === groupId)
+  if (!task || task.someday || (groupId !== null && !data.groups.some(g => g.id === groupId))) return data
+  const ordered = data.tasks.filter(t => !t.someday && t.id !== id && t.groupId === groupId)
     .sort((a, b) => a.order - b.order)
   const index = ordered.findIndex(t => t.id === beforeId)
   ordered.splice(index < 0 ? ordered.length : index, 0, {

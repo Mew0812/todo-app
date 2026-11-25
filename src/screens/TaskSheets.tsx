@@ -8,6 +8,7 @@ import { SortableRows } from '../components/SortableRows'
 export function AddTask({ tab, today, initialDate, groups, onClose, onAdd }:
   { tab: Tab; today: string; initialDate?: string; groups: Data['groups']; onClose: () => void; onAdd: (task: Task) => Promise<boolean> }) {
   const future = tab === '明日以降'
+  const someday = tab === '将来'
   const [busy, setBusy] = useState(false)
   const minimum = future ? offsetDate(today, 1) : today
   return <Sheet title="タスクを追加" compact onClose={onClose}>
@@ -16,12 +17,13 @@ export function AddTask({ tab, today, initialDate, groups, onClose, onAdd }:
       if (busy) return
       const form = new FormData(event.currentTarget)
       const title = String(form.get('title')).trim()
-      const date = String(form.get('date') ?? '')
-      if (!title || !date || date < minimum) return
+      const date = someday ? null : String(form.get('date') ?? '')
+      if (!title || (!someday && (!date || date < minimum))) return
       setBusy(true)
       const now = iso()
       const success = await onAdd({
-        id: crypto.randomUUID(), title, date, groupId: String(form.get('group') ?? '') || null,
+        id: crypto.randomUUID(), title, date, someday: someday ? true : undefined,
+        groupId: String(form.get('group') ?? '') || null,
         important: form.has('important'), note: String(form.get('note') ?? ''), checklist: [],
         createdAt: now, updatedAt: now, completedAt: null, deletedAt: null, completed: false, order: 0,
       })
@@ -36,11 +38,11 @@ export function AddTask({ tab, today, initialDate, groups, onClose, onAdd }:
       <details>
         <summary onPointerDown={event => event.preventDefault()}>詳細設定</summary>
         <div className="form-stack disclosure-body">
-          {!future && <label>予定日<input type="date" name="date" min={minimum} defaultValue={today} required
+          {!future && !someday && <label>予定日<input type="date" name="date" min={minimum} defaultValue={today} required
             onInvalid={event => { const details = event.currentTarget.closest('details'); if (details) details.open = true }} /></label>}
-          <label>グループ<select name="group"><option value="">グループなし</option>
+          {!someday && <><label>グループ<select name="group"><option value="">グループなし</option>
             {groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
-          <label className="check-label"><input name="important" type="checkbox" />重要</label>
+          <label className="check-label"><input name="important" type="checkbox" />重要</label></>}
           <label>メモ<textarea name="note" rows={3} /></label>
         </div>
       </details>
@@ -70,10 +72,11 @@ export function TaskDetail({ task, today, groupName, onClose, onSave }:
           if (title) edit({ title })
         }} /></label>
       <div className="detail-meta">
-        <button type="button" className="soft" disabled={readOnly} onClick={() => setPicker(true)}>{formatDate(draft.date)}</button>
-        <button type="button" className="soft" disabled={readOnly} aria-pressed={draft.important}
+        <button type="button" className="soft" disabled={readOnly}
+          onClick={() => setPicker(true)}>{draft.someday ? '実施日を決める' : formatDate(draft.date)}</button>
+        {!draft.someday && <><button type="button" className="soft" disabled={readOnly} aria-pressed={draft.important}
           onClick={() => edit({ important: !draft.important })}>{draft.important ? '★' : '☆'} 重要</button>
-        {groupName && <span>{groupName}</span>}
+        {groupName && <span>{groupName}</span>}</>}
       </div>
       <section className="detail-section">
         <h3>メモ</h3>
@@ -110,6 +113,9 @@ export function TaskDetail({ task, today, groupName, onClose, onSave }:
         </div>
       </section>
     </div>
-    {picker && <DatePicker today={today} value={draft.date} onChange={date => edit({ date })} onClose={() => setPicker(false)} />}
+    {picker && <DatePicker today={today} value={draft.date}
+      onChange={date => edit({ date, someday: undefined })}
+      onSomeday={draft.someday ? undefined : () => edit({ someday: true, date: null, important: false })}
+      onClose={() => setPicker(false)} />}
   </Sheet>
 }

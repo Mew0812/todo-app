@@ -46,8 +46,8 @@ function DateGrid({ today, selected, onSelect }: { today: string; selected: stri
   </div>
 }
 
-export function DatePicker({ today, value, onChange, onClose }:
-  { today: string; value: string | null; onChange: (date: string) => void; onClose: () => void }) {
+export function DatePicker({ today, value, onChange, onClose, onSomeday }:
+  { today: string; value: string | null; onChange: (date: string) => void; onClose: () => void; onSomeday?: () => void }) {
   function select(date: string) {
     if (date !== value) onChange(date)
     onClose()
@@ -56,8 +56,8 @@ export function DatePicker({ today, value, onChange, onClose }:
     <div className="date-popover" role="dialog" aria-label="予定日を選択" onClick={event => event.stopPropagation()}>
       <DateGrid today={today} selected={value} onSelect={select} />
       <div className="date-shortcuts">
-        <button type="button" onClick={() => select(today)}>今日</button>
         <button type="button" onClick={() => select(offsetDate(today, 1))}>明日</button>
+        {onSomeday && <button type="button" onClick={() => { onSomeday(); onClose() }}>将来</button>}
       </div>
     </div>
   </div>

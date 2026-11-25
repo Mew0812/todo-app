@@ -1,9 +1,27 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { backup, belongs, fresh, futureDates, localDate, maintain, moveTask, moveWithinDate, moveTomorrowToToday, offsetDate, preserveTomorrowMoves, restore, retention, updateTask, type Task } from '../src/data/model.ts'
+import { addTask, backup, belongs, changeDate, fresh, futureDates, localDate, maintain, moveSomeday, moveTask, moveWithinDate, moveTomorrowToToday, offsetDate, preserveTomorrowMoves, restore, retention, updateTask, type Task } from '../src/data/model.ts'
 
 const now = new Date(2026, 10, 19, 11)
 const timestamp = now.toISOString()
+
+test('someday is explicit, survives backups and rollover, and keeps its own manual order', () => {
+  const current = localDate(now)
+  const tomorrow = offsetDate(current, 1)
+  const data = { ...fresh(), tasks: [task('legacy', { date: null }), task('scheduled', { date: tomorrow, important: true, note: '保つ' })] }
+  const first = updateTask(data, 'scheduled', row => ({ ...row, someday: true }))
+  const added = addTask(first, task('new', { someday: true, date: null }), false)
+  const moved = moveSomeday(added, 'scheduled', 'new')
+  const restored = backup.parse(JSON.parse(JSON.stringify(moved)))
+  const after = maintain(restored, new Date(2026, 10, 22))
+  assert.deepEqual(moveTomorrowToToday(after, now), after)
+  assert.deepEqual(after.tasks.filter(row => belongs(row, '将来', current)).sort((a, b) => a.order - b.order)
+    .map(row => [row.id, row.date, row.important]), [['scheduled', null, false], ['new', null, false]])
+  const back = updateTask(after, 'scheduled', row => changeDate(row, tomorrow)).tasks.find(row => row.id === 'scheduled')!
+  assert.equal(back.note, '保つ')
+  assert.equal(belongs(back, '明日以降', current), true)
+  assert.equal(belongs(back, '将来', current), false)
+})
 
 test('manual tomorrow move preserves fields, excludes completed and trashed tasks, and keeps history after restore', () => {
   const current = localDate(now)

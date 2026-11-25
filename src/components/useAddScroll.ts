@@ -43,7 +43,7 @@ export function useAddScroll(open: boolean) {
       if (saved.addedId) {
         const card = document.getElementById('task-card-' + saved.addedId)?.getBoundingClientRect()
         const safeBottom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-bottom')) || 0
-        const bottom = window.innerHeight - safeBottom
+        const bottom = document.querySelector('.page-tabs')?.getBoundingClientRect().top ?? window.innerHeight - safeBottom
         if (card && card.bottom - offset > bottom && card.bottom - anchor.top < bottom) {
           offset = card.bottom - bottom
         }

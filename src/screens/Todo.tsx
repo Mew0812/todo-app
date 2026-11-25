@@ -32,7 +32,7 @@ export type Actions = {
 
 export function Card({ task, actions, animation }: { task: Task; actions?: Actions; animation?: string }) {
   const progress = task.checklist.filter(item => item.checked).length
-  return <article className={['task-card', task.important ? 'important' : '', animation ?? ''].join(' ')}>
+  return <article className={['task-card', task.someday ? 'someday-card' : task.important ? 'important' : '', animation ?? ''].join(' ')}>
     <button className="icon-button complete" aria-label="完了にする" tabIndex={actions ? 0 : -1}
       onClick={() => actions?.complete(task)}><span><Check size={13} /></span></button>
     <div className="task-copy">
@@ -40,8 +40,8 @@ export function Card({ task, actions, animation }: { task: Task; actions?: Actio
         onClick={() => actions?.open(task)}>{task.title}</button>
       {task.checklist.length > 0 && <div className="task-meta"><span><ListChecks size={15} />{progress}/{task.checklist.length}</span></div>}
     </div>
-    <button className="icon-button star" aria-label="重要" aria-pressed={task.important} tabIndex={actions ? 0 : -1}
-      onClick={() => actions?.importance(task)}><Star size={19} fill={task.important ? 'currentColor' : 'none'} /></button>
+    {!task.someday && <button className="icon-button star" aria-label="重要" aria-pressed={task.important} tabIndex={actions ? 0 : -1}
+      onClick={() => actions?.importance(task)}><Star size={19} fill={task.important ? 'currentColor' : 'none'} /></button>}
     <button className="icon-button delete" aria-label="削除" tabIndex={actions ? 0 : -1}
       onClick={() => actions?.remove(task)}><Trash2 size={18} /></button>
   </article>
@@ -106,6 +106,10 @@ export function Todo({ data, tab, today, visible, completed, onAddDate, onMoveTo
     const remaining = target.tasks.filter(row => row.id !== task.id)
     const former = target.tasks.findIndex(row => row.id === task.id)
     const index = target.index - (former >= 0 && former < target.index ? 1 : 0)
+    if (tab === '将来') {
+      if (former !== index) move(task, task.groupId, remaining[index]?.id)
+      return
+    }
     if (future) {
       if (target.date !== task.date || former !== index) move(task, task.groupId, remaining[index]?.id, target.date)
       return
@@ -163,7 +167,7 @@ export function Todo({ data, tab, today, visible, completed, onAddDate, onMoveTo
   return <>
     {!future && !visible.length && <div className="empty">
       <span className="empty-icon"><Check size={27} /></span>
-      <p>今日のタスクはありません</p>
+      <p>{tab === '将来' ? '将来のタスクはありません' : '今日のタスクはありません'}</p>
     </div>}
     <DndContext sensors={sensors} collisionDetection={collision} onDragEnd={finish} onDragCancel={reset}
       autoScroll={{ threshold: { x: 0, y: 0.16 }, acceleration: 14 }}
@@ -190,7 +194,9 @@ export function Todo({ data, tab, today, visible, completed, onAddDate, onMoveTo
           </DropZone>
           {tasks.length > 0 && taskList(target)}
         </section>
-      }) : todayList()}
+      }) : tab === '将来'
+        ? taskList({ groupId: null, index: 0, tasks: sortTasks(visible.slice()), collapsed: false })
+        : todayList()}
       <DragOverlay dropAnimation={{ duration: 200, easing: 'ease-out' }}>
         {dragging && <div className="floating-card" aria-hidden="true"><Card task={dragging} /></div>}
       </DragOverlay>

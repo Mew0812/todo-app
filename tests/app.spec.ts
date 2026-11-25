@@ -4,10 +4,11 @@ import { formatDate, fresh, futureDates, iso, localDate, offsetDate } from '../s
 const button = (page: Page, name: string) => page.getByRole('button', { name, exact: true })
 const card = (page: Page, name: string) => page.locator('.task-card').filter({ has: button(page, name) })
 
-async function swipeTo(page: Page, tab: '今日' | '明日以降') {
+async function swipeTo(page: Page, tab: '今日' | '明日以降' | '将来') {
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
   await page.locator('main').evaluate((target, to) => {
-    const right = to === '今日'
+    const pages = ['今日', '明日以降', '将来']
+    const right = pages.indexOf(to) < pages.indexOf(target.querySelector('h1')!.textContent!)
     for (const [type, x] of [['touchstart', right ? 70 : 300], ['touchmove', right ? 190 : 180],
       ['touchend', right ? 300 : 70]] as const) {
       const point = { identifier: 1, clientX: x, clientY: 180 }
@@ -84,7 +85,7 @@ test('mobile lifecycle, autosave, dates, reload and offline startup', async ({ p
   await button(page, '買い物').click()
   await expect(detail.getByLabel('メモ')).toHaveValue('自動保存するメモ')
   await detail.locator('.detail-meta button').first().click()
-  await page.getByRole('dialog', { name: '予定日を選択' }).getByRole('button', { name: '今日', exact: true }).click()
+  await page.getByRole('dialog', { name: '予定日を選択' }).getByRole('button', { name: formatDate(localDate()), exact: true }).click()
   await detail.getByRole('button', { name: 'シートを閉じる' }).click()
   await expect(button(page, '買い物')).toHaveCount(0)
   await swipeTo(page, '今日')
@@ -109,7 +110,7 @@ test('mobile lifecycle, autosave, dates, reload and offline startup', async ({ p
 test('future headings list every date and allow quick-add with an editable, required date', async ({ page }) => {
   const dates = futureDates(localDate())
   await page.goto('/')
-  await expect(page.getByRole('navigation')).toHaveCount(0)
+  await expect(page.getByRole('navigation').getByRole('button')).toHaveText(['今日', '明日以降', '将来'])
   await expect(page.locator('main').getByRole('button', { name: /^(今日|明日以降|カレンダー)$/ })).toHaveCount(0)
   await expect(button(page, 'カレンダー')).toHaveCount(0)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('今日')
@@ -319,6 +320,10 @@ test('native swipes switch screens, preserve scroll, and leave sheets and edge g
   await expect(heading).toHaveText('明日以降')
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await swipe(300, 450, -220, 0)
+  await expect(heading).toHaveText('将来')
+  await swipe(300, 450, -220, 0)
+  await expect(heading).toHaveText('将来')
+  await swipe(75, 420, 240, 0)
   await expect(heading).toHaveText('明日以降')
   await swipe(150, 650, 0, -340)
   await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0)
@@ -342,6 +347,70 @@ test('native swipes switch screens, preserve scroll, and leave sheets and edge g
   await swipe(310, 200, -240, 0)
   await expect(heading).toHaveText('明日以降')
   await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThanOrEqual(y)
+})
+
+test('someday tasks move both ways, persist, can be reordered, and restore after completion or deletion', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 850 })
+  await page.goto('/')
+  await add(page, 'いつか学ぶ')
+  await button(page, 'いつか学ぶ').click()
+  const detail = page.getByRole('dialog', { name: 'タスクの詳細' })
+  await detail.getByLabel('メモ').fill('元のメモ')
+  await detail.getByLabel('新しい項目').fill('本を読む')
+  await detail.getByRole('button', { name: 'チェック項目を追加' }).click()
+  await detail.locator('.detail-meta button').first().click()
+  const picker = page.getByRole('dialog', { name: '予定日を選択' })
+  await picker.getByRole('button', { name: '将来', exact: true }).click()
+  await button(page, 'シートを閉じる').click()
+  await expect(card(page, 'いつか学ぶ')).toHaveCount(0)
+  const nav = page.getByRole('navigation', { name: 'ページ切り替え' })
+  await nav.getByRole('button', { name: '将来' }).click()
+  await expect(nav.getByRole('button', { name: '将来' })).toHaveAttribute('aria-current', 'page')
+  await expect(card(page, 'いつか学ぶ').getByRole('button', { name: '重要' })).toHaveCount(0)
+  const fab = (await button(page, 'タスクを追加').boundingBox())!
+  expect(fab.y + fab.height).toBeLessThan((await nav.boundingBox())!.y)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320)
+  await add(page, '新しい目標')
+  const names = page.locator('main .drag-slot .task-name')
+  await expect(names).toHaveText(['新しい目標', 'いつか学ぶ'])
+
+  const from = (await card(page, '新しい目標').boundingBox())!
+  const to = (await card(page, 'いつか学ぶ').boundingBox())!
+  await page.mouse.move(from.x + 15, from.y + 20)
+  await page.mouse.down()
+  await expect(page.locator('.floating-card')).toBeVisible()
+  await page.mouse.move(to.x + 15, to.y + to.height * .8)
+  await expect(page.locator('.drag-slot').filter({ has: button(page, 'いつか学ぶ') })
+    .locator('.target-after .drop-line')).toBeVisible()
+  await page.mouse.up()
+  await expect(names).toHaveText(['いつか学ぶ', '新しい目標'])
+  await page.reload()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('今日')
+  await nav.getByRole('button', { name: '将来' }).click()
+  await expect(names).toHaveText(['いつか学ぶ', '新しい目標'])
+
+  await card(page, '新しい目標').getByRole('button', { name: '削除' }).click()
+  await button(page, '元に戻す').click()
+  await expect(page.locator('.toast')).toHaveCount(0)
+  await expect(names).toHaveText(['いつか学ぶ', '新しい目標'])
+  await card(page, '新しい目標').getByRole('button', { name: '完了にする' }).click()
+  await nav.getByRole('button', { name: '今日' }).click()
+  await page.getByText('今日の完了済み（1件）').click()
+  await button(page, '戻す').click()
+  await nav.getByRole('button', { name: '将来' }).click()
+  await expect(names).toHaveText(['いつか学ぶ', '新しい目標'])
+
+  await button(page, 'いつか学ぶ').click()
+  await expect(nav).toHaveCount(0)
+  await expect(detail.getByLabel('メモ')).toHaveValue('元のメモ')
+  await expect(detail.getByLabel('チェック項目名')).toHaveValue('本を読む')
+  await expect(detail.getByRole('button', { name: /重要/ })).toHaveCount(0)
+  await detail.getByRole('button', { name: '実施日を決める' }).click()
+  await picker.getByRole('button', { name: '明日', exact: true }).click()
+  await button(page, 'シートを閉じる').click()
+  await expect(names).toHaveText(['新しい目標'])
+  await nav.getByRole('button', { name: '明日以降' }).click()
+  await expect(card(page, 'いつか学ぶ').getByRole('button', { name: '重要' })).toBeVisible()
 })
 
 test('legacy IndexedDB preferences are ignored and tasks are retained', async ({ page }) => {

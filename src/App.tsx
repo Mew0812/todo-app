@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Plus, Settings2 } from 'lucide-react'
+import { CalendarDays, CalendarRange, Check, Plus, Settings2, Sparkles } from 'lucide-react'
 import { useAddScroll } from './components/useAddScroll'
 import { useScreenSwipe } from './components/useScreenSwipe'
-import { addTask, belongs, changeDate, formatDate, iso, localDate, moveTask, moveWithinDate, moveTomorrowToToday, offsetDate, preserveTomorrowMoves, updateTask, restore as restoreTask, retention, colors,
+import { addTask, belongs, changeDate, formatDate, iso, localDate, moveSomeday, moveTask, moveWithinDate, moveTomorrowToToday, offsetDate, preserveTomorrowMoves, tabs, updateTask, restore as restoreTask, retention, colors,
   type Data, type Tab, type Task } from './data/model'
 import { readBackup, update, type Change } from './data/storage'
 import { Settings } from './screens/Settings'
@@ -14,6 +14,7 @@ import { Todo, type Actions } from './screens/Todo'
 type Detail = { task: Task; snapshot: Data }
 type Leaving = { task: Task; tab: Tab }
 const newest = (a: string | null, b: string | null) => (b ?? '').localeCompare(a ?? '')
+const tabIcons = { 今日: CalendarDays, 明日以降: CalendarRange, 将来: Sparkles }
 
 export default function App() {
   const [data, setData] = useState<Data>()
@@ -35,9 +36,10 @@ export default function App() {
     setToday(localDate())
     resetAfterRestore()
   })
-  const switched = useRef(false)
-  const swipe = useScreenSwipe(tab, Boolean(settings || adding || detail), next => {
-    switched.current = true
+  const direction = useRef<string | undefined>(undefined)
+  const overlay = Boolean(settings || adding || detail)
+  const swipe = useScreenSwipe(tab, overlay, next => {
+    direction.current = tabs.indexOf(next) < tabs.indexOf(tab) ? 'today-content' : 'future-content'
     setTab(next)
   })
   const undoTimer = useRef<number>(undefined)
@@ -197,10 +199,10 @@ export default function App() {
       <button className="icon-button settings-button" aria-label="設定" onClick={() => setSettings(true)}><Settings2 size={20} /></button>
     </header>
     <main {...swipe.handlers} className={tab === '明日以降' ? 'main main-future' : 'main'}>
-      <div className="page-title"><h1>{tab}</h1><span>{formatDate(today)}</span></div>
+      <div className="page-title"><h1>{tab}</h1>{tab !== '将来' && <span>{formatDate(today)}</span>}</div>
       {remind && <div className="backup-reminder"><button onClick={() => setSettings(true)}>JSONバックアップを保存する</button>
         <button className="icon-button" aria-label="案内を閉じる" onClick={() => setBackupDismissed(true)}>×</button></div>}
-      <div key={tab} className={switched.current ? (tab === '今日' ? 'today-content' : 'future-content') : undefined}>
+      <div key={tab} className={direction.current}>
         <Todo onDragState={swipe.onDragState} data={view} tab={tab} today={today} visible={visible}
           completed={todaysCompleted} completedOpen={completedOpen} onCompletedToggle={setCompletedOpen}
           toggle={toggle} restore={restore} animations={animations}
@@ -212,7 +214,7 @@ export default function App() {
             void save(current => localDate() === clickedDay ? moveTomorrowToToday(current, clickedAt) : current)
           }}
           move={async (task, group, before, date) => {
-            const saved = await save(current => date
+            const saved = await save(current => tab === '将来' ? moveSomeday(current, task.id, before) : date
               ? (date > localDate() ? moveWithinDate(current, task.id, date, before) : current)
               : moveTask(current, task.id, group, before))
             if (saved) animate(task.id, 'entering')
@@ -220,10 +222,17 @@ export default function App() {
           actions={actions} />
       </div>
     </main>
-    {tab === '今日' && <button className="fab" aria-label="タスクを追加"
+    {!overlay && tab !== '明日以降' && <button className="fab" aria-label="タスクを追加"
       onClick={() => { addScroll.capture(); setAdding({}) }}><Plus size={27} /></button>}
+    {!overlay && <nav className="page-tabs" aria-label="ページ切り替え">
+      {tabs.map(page => {
+        const Icon = tabIcons[page]
+        return <button key={page} type="button" aria-current={tab === page ? 'page' : undefined}
+          onClick={() => swipe.select(page)}><Icon size={21} aria-hidden="true" /><span>{page}</span></button>
+      })}
+    </nav>}
     {settings && <Settings data={view} onClose={() => setSettings(false)} completed={completed} trash={trash}
-      undated={active.filter(task => task.date === null)} taskActions={actions}
+      undated={active.filter(task => task.date === null && !task.someday)} taskActions={actions}
       onGroup={editGroup} openTask={openTask} restore={restore}
       onGroups={ids => save(current => {
         const rank = new Map(ids.map((id, index) => [id, index]))
@@ -231,12 +240,12 @@ export default function App() {
       })}
       deleteGroup={id => save(current => {
         let order = Math.max(-1, ...current.tasks.filter(task => task.groupId === null).map(task => task.order)) + 1
-        const displaced = current.tasks.filter(task => task.groupId === id).sort((a, b) => a.order - b.order)
+        const displaced = current.tasks.filter(task => task.groupId === id && !task.someday).sort((a, b) => a.order - b.order)
         const positions = new Map(displaced.map(task => [task.id, order++]))
         return {
           ...current, groups: current.groups.filter(group => group.id !== id),
           tasks: current.tasks.map(task => task.groupId === id ? { ...task, groupId: null,
-            order: positions.get(task.id)!, updatedAt: iso() } : task),
+            order: positions.get(task.id) ?? task.order, updatedAt: iso() } : task),
         }
       })}
       purge={task => save(current => ({ ...current, tasks: current.tasks.filter(row => row.id !== task.id || !row.deletedAt) }))}

@@ -1,16 +1,22 @@
 import { useLayoutEffect, useRef, type TouchEvent } from 'react'
-import type { Tab } from '../data/model'
+import { tabs, type Tab } from '../data/model'
 
 export function useScreenSwipe(tab: Tab, blocked: boolean, switchTab: (tab: Tab) => void) {
   const start = useRef<{ id: number; x: number; y: number; horizontal?: boolean } | null>(null)
-  const scroll = useRef<Record<Tab, number>>({ 今日: 0, 明日以降: 0 })
+  const scroll = useRef<Partial<Record<Tab, number>>>({})
   const dragging = useRef(false)
 
   useLayoutEffect(() => {
-    window.scrollTo(0, scroll.current[tab])
+    window.scrollTo(0, scroll.current[tab] ?? 0)
   }, [tab])
 
   return {
+    select(next: Tab) {
+      if (blocked || dragging.current || next === tab) return
+      start.current = null
+      scroll.current[tab] = window.scrollY
+      switchTab(next)
+    },
     onDragState(active: boolean) {
       dragging.current = active
       if (active) start.current = null
@@ -44,9 +50,10 @@ export function useScreenSwipe(tab: Tab, blocked: boolean, switchTab: (tab: Tab)
         const x = touch.clientX - origin.x
         const y = touch.clientY - origin.y
         if (Math.abs(x) < 60 || Math.abs(x) <= Math.abs(y) * 1.5) return
-        if ((tab === '今日' && x < 0) || (tab === '明日以降' && x > 0)) {
+        const next = tabs[tabs.indexOf(tab) + (x < 0 ? 1 : -1)]
+        if (next) {
           scroll.current[tab] = window.scrollY
-          switchTab(tab === '今日' ? '明日以降' : '今日')
+          switchTab(next)
         }
       },
     },
