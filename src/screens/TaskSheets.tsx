@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
-import { formatDate, iso, offsetDate, type Data, type Tab, type Task } from '../data/model'
+import { formatDate, iso, localDate, offsetDate, type Data, type Tab, type Task } from '../data/model'
 import { DatePicker } from '../components/DatePicker'
 import { Sheet } from '../components/Sheet'
 import { SortableRows } from '../components/SortableRows'
@@ -52,7 +52,7 @@ export function AddTask({ tab, today, initialDate, groups, onClose, onAdd }:
 }
 
 export function TaskDetail({ task, today, groupName, onClose, onSave }:
-  { task: Task; today: string; groupName?: string; onClose: () => void; onSave: (patch: Partial<Task>) => void }) {
+  { task: Task; today: string; groupName?: string; onClose: () => void; onSave: (patch: Partial<Task>) => Promise<Data | undefined> }) {
   const [draft, setDraft] = useState(task)
   const [name, setName] = useState(task.title)
   const [newItem, setNewItem] = useState('')
@@ -114,7 +114,13 @@ export function TaskDetail({ task, today, groupName, onClose, onSave }:
       </section>
     </div>
     {picker && <DatePicker today={today} value={draft.date}
-      onChange={date => edit({ date, someday: undefined })}
+      onChange={async date => {
+        if (!draft.someday) {
+          edit({ date })
+          return
+        }
+        if (date >= localDate() && await onSave({ date, someday: undefined })) onClose()
+      }}
       onSomeday={draft.someday ? undefined : () => edit({ someday: true, date: null, important: false })}
       onClose={() => setPicker(false)} />}
   </Sheet>
